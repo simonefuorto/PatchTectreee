@@ -1,0 +1,144 @@
+ /*
+ * Copyright (c) 2009-2012 Mark D. Hill and David A. Wood
+ * Copyright (c) 2010-2012 Advanced Micro Devices, Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met: redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer;
+ * redistributions in binary form must reproduce the above copyright
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution;
+ * neither the name of the copyright holders nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+enumeration(CoherenceRequestType, desc="Types of request messages") {
+  SH_REQ,       desc="Request sent from cache for a block with read permission";
+  EX_REQ,       desc="Request sent from cache for a block with write permission";
+  FLUSH_REQ,    desc="Request sent from directory to cache to evict a block (due Exclusive Req)";
+  WB_REQ,       desc="Request sent from directory to cache to evict a block (due Writeback)";
+}
+
+enumeration(CoherenceResponseType, desc="Types of response messages") {
+	SH_REP,			desc="Shared Response sent from directory to cache";
+	EX_REP,			desc="Exclusive Response sent from directory to cache";
+	RENEW_REP,  desc="Renew for lease Response sent from directory to cache";
+  UPGR_REP,   desc="Upgrade Response sent from directory to cache (due to owned EX_REQ)";
+  FLUSH_REP,  desc="Flush Response sent from cache to directory";
+	WB_REP,     desc="Writeback Response sent from cache to directory";
+  PUT_REP,    desc="Put Response sent from cache to directory due to eviction";
+  ACK_REP,    desc="Ack from Memory Response sent from directory to cache due to finished Writeback of data in Memory";
+}
+
+structure(RequestMsg, desc="Used for request and forward-request message", interface="Message") {
+  Addr addr,                   desc="Physical address for this request";
+  CoherenceRequestType Type,   desc="Type of request";
+  MachineID Requestor,         desc="Node who initiated the request";
+  NetDest Destination,         desc="Used for multicast destination mask";
+  DataBlock DataBlk,           desc="Datablock";
+  MessageSizeType MessageSize, desc="Size category of the message";
+
+  int lts,                  desc="Load timestamp sent into request";
+  int sts,                  desc="Store timestamp sent into request";
+  int rts,                  desc="Read timestamp sent into request";
+  int wts,                  desc="Write timestamp sent into request";
+
+  bool functionalRead(Packet *pkt) {
+	  return false;
+  }
+
+  bool functionalWrite(Packet *pkt) {
+    return testAndWrite(addr, DataBlk, pkt);
+  }
+}
+
+structure(ResponseMsg, desc="Response and forward-response message", interface="Message") {
+  Addr addr,                   desc="Physical address for this response";
+  CoherenceResponseType Type,  desc="Type of response";
+  MachineID Sender,            desc="Node who is responding to the request";
+  NetDest Destination,         desc="Used for multicast destination mask. In Tardis TSO will be always 1-destination value (no multicast)";
+  DataBlock DataBlk,           desc="Datablock";
+  MessageSizeType MessageSize, desc="Size category of the message";
+
+	int lts,                  desc="Load timestamp sent into response";
+  int sts,                  desc="Store timestamp sent into response";
+  int rts,                  desc="Read timestamp sent into response";
+  int wts,                  desc="Write timestamp sent into response";
+
+  bool functionalRead(Packet *pkt) {
+    if (Type == CoherenceResponseType:SH_REP || Type == CoherenceResponseType:EX_REP 
+        || Type == CoherenceResponseType:RENEW_REP || Type == CoherenceResponseType:FLUSH_REP
+        || Type == CoherenceResponseType:WB_REP || Type == CoherenceResponseType:UPGR_REP
+        || Type == CoherenceResponseType:PUT_REP) {
+      return testAndRead(addr, DataBlk, pkt);
+    }
+    return false;
+  }
+
+  bool functionalWrite(Packet *pkt) {
+    return testAndWrite(addr, DataBlk, pkt);
+  }
+}
+
+//DMA
+enumeration(DMARequestType, desc="...", default="DMARequestType_NULL") {
+  READ,          desc="Memory Read";
+  WRITE,         desc="Memory Write";
+  NULL,          desc="Invalid";
+}
+
+enumeration(DMAResponseType, desc="...", default="DMAResponseType_NULL") {
+  DATA,          desc="DATA read";
+  ACK,           desc="ACK write";
+  NULL,          desc="Invalid";
+}
+
+structure(DMARequestMsg, desc="...", interface="Message") {
+  DMARequestType Type,       desc="Request type (read/write)";
+  Addr PhysicalAddress,   desc="Physical address for this request";
+  Addr LineAddress,       desc="Line address for this request";
+  MachineID Requestor,            desc="Node who initiated the request";
+  NetDest Destination,       desc="Destination";
+  DataBlock DataBlk,         desc="DataBlk attached to this request";
+  int Len,                   desc="The length of the request";
+  MessageSizeType MessageSize, desc="size category of the message";
+
+  bool functionalRead(Packet *pkt) {
+    return testAndRead(LineAddress, DataBlk, pkt);
+  }
+
+  bool functionalWrite(Packet *pkt) {
+    return testAndWrite(LineAddress, DataBlk, pkt);
+  }
+}
+
+structure(DMAResponseMsg, desc="...", interface="Message") {
+  DMAResponseType Type,      desc="Response type (DATA/ACK)";
+  Addr PhysicalAddress,   desc="Physical address for this request";
+  Addr LineAddress,       desc="Line address for this request";
+  NetDest Destination,       desc="Destination";
+  DataBlock DataBlk,         desc="DataBlk attached to this request";
+  MessageSizeType MessageSize, desc="size category of the message";
+
+  bool functionalRead(Packet *pkt) {
+    return testAndRead(LineAddress, DataBlk, pkt);
+  }
+
+  bool functionalWrite(Packet *pkt) {
+    return testAndWrite(LineAddress, DataBlk, pkt);
+  }
+}

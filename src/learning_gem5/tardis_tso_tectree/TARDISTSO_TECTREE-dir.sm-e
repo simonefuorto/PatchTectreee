@@ -1,0 +1,886 @@
+/*
+ * Copyright (c) 2017 Jason Lowe-Power
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met: redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer;
+ * redistributions in binary form must reproduce the above copyright
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution;
+ * neither the name of the copyright holders nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+machine(MachineType:Directory, "Directory protocol")
+    :
+      // This "DirectoryMemory" is a little weird. It is initially allocated
+      // so that it *can* cover all of memory (i.e., there are pointers for
+      // every 64-byte block in memory). However, the entries are lazily
+      // created in getDirEntry()
+      DirectoryMemory * directory;
+      CacheMemory * LLC;
+	  
+	  int mts := 1;
+	  int lease;   //Lease to add to the timestamp of a requested block
+      Cycles directory_latency := 12;
+      Cycles to_memory_controller_latency := 1;
+
+    // Forwarding requests from the directory *to* the caches: FLUSH_REQ, WB_REQ
+    MessageBuffer *forwardToCache, network="To", virtual_network="1",
+          vnet_type="forward";
+    // Response from the directory *to* the cache: SH_REP, EX_REP, RENEW_REP, UPGR_REP
+    MessageBuffer *responseToCache, network="To", virtual_network="2",
+          vnet_type="response";
+
+    // Requests *from* the cache to the directory: SH_REQ, EX_REQ
+    MessageBuffer *requestFromCache, network="From", virtual_network="0",
+          vnet_type="request";
+
+    // Responses *from* the cache to the directory: FLUSH_REP, WB_REP
+    MessageBuffer *responseFromCache, network="From", virtual_network="2",
+          vnet_type="response";
+
+    // Special buffer for memory requests. Kind of like the mandatory queue: MEM_REQ
+    MessageBuffer *requestToMemory;
+
+    // Special buffer for memory responses. Kind of like the mandatory queue: DRAM_REP
+    MessageBuffer *responseFromMemory;
+
+{
+    // States of the cached block.
+    state_declaration(State, desc="Directory states", default="Directory_State_I") {
+        // Thise are "cache-centric" states.
+        // However, The access permissions are memory-centric.
+        I, AccessPermission:Read_Write,	desc="Invalid in the caches";		
+		S, AccessPermission:Read_Only,	desc="At least one cache has the block in Shared state";
+        E, AccessPermission:Invalid,	desc="A cache has the block in Exclusive state";
+
+        // Transient states
+		//From Invalid to Shared/Exclusive
+		IS, AccessPermission:Busy,	desc="Invalid to Shared. Waiting for Memory data";
+        IE, AccessPermission:Busy,	desc="Invalid to Exclusive. Waiting for Memory data";
+		//From Shared to Exclusive
+		SE, AccessPermission:Busy, desc="A block is moving from Shared to Exclusive state";
+		//From Exclusive to Exclusive (new owner)
+		EE, AccessPermission:Busy,	desc="A block is moving from Exclusive to Exclusive state of another cache";
+		E_m,AccessPermission:Busy,	desc="A block is moving to EX in writeback phase to memory waiting the ACK from it";
+		//From Exclusive to Shared
+        ES, AccessPermission:Busy,	desc="A block is moving from Exclusive to Shared state";
+		SS_m,AccessPermission:Busy,	desc="A block is moving to EX in writeback phase to memory waiting the ACK from it";
+		//From Exclusive to Invalid		
+		ES_m, AccessPermission:Busy, desc="A block is moving from Exclusive or Shared to Shared state waiting the ACK from memory";
+	}
+
+    enumeration(Event, desc="Directory events") {
+        // Data requests from the cache
+        ShReq,		desc="Request for read-only data from cache";
+        ShReq_Hit,  desc="Request for read-only data from cache (LLC Hit)";
+        ExReq,      desc="Request for read-write data from cache";
+        ExReq_Hit,  desc="Request for read-write data from cache (LLC Hit)";
+
+        FlushRep,   desc="Received a block from the owner";
+		UpgReq,		desc="Send to a cache an Upgrade Rep";
+        // From Memory
+        Memory_Data,    desc="Data from memory";
+		Memory_Ack,    desc="Ack from memory that write is complete";
+    }
+
+    // NOTE: We use a netdest for the sharers and the owner so we can simply
+    // copy the structure into the message we send as a response.
+    structure(Entry, desc="...", interface="AbstractCacheEntry", main="false") {
+        State DirState, desc="Directory state";
+		int wts, default=0, desc="Write timestamp";
+		int rts, default=0, desc="Read timestamp";
+        NetDest Owner, desc="Owner of this block";
+    }
+
+    structure(LLC_Entry, desc="LLC cache entry", interface="AbstractCacheEntry") {
+        State CacheState,        desc="cache state";
+        DataBlock DataBlk,       desc="data for the block";
+    }
+
+	structure(TBE, desc="TBE entries requests") {
+		State TBEState,        desc="Transient State";
+		Addr PhysicalAddress, desc="physical address";
+		DataBlock DataBlk,     desc="Data to be written";
+		MachineID Requestor, desc="requestor";
+		int wts,	default=0, desc="";
+		int rts,	default=0, desc="";
+		int lts,	default=0, desc="Lts";
+	}
+
+	structure(TBETable, external="yes") {
+		TBE lookup(Addr);
+		void allocate(Addr);
+		void deallocate(Addr);
+		bool isPresent(Addr);
+	}
+
+	// ** OBJECTS **
+	TBETable TBEs, template="<Directory_TBE>", constructor="m_number_of_TBEs";
+
+
+    Tick clockEdge();
+	Cycles ticksToCycles(Tick t);
+	Tick cyclesToTicks(Cycles c);
+	void set_tbe(TBE b);
+	void unset_tbe();
+	void set_cache_entry(AbstractCacheEntry b);
+	void unset_cache_entry();
+
+    // This either returns the valid directory entry, or, if it hasn't been
+    // allocated yet, this allocates the entry. This may save some host memory
+    // since this is lazily populated.
+    Entry getDirectoryEntry(Addr addr), return_by_pointer="yes" {
+		Entry dir_entry := static_cast(Entry, "pointer", directory[addr]);
+
+		if (is_valid(dir_entry)) {
+			return dir_entry;
+		}
+
+		dir_entry :=  static_cast(Entry, "pointer",
+								directory.allocate(addr, new Entry));
+		return dir_entry;
+	}
+
+    LLC_Entry getLLCEntry(Addr addr), return_by_pointer="yes" {
+        LLC_Entry llc_entry := static_cast(LLC_Entry, "pointer", LLC.lookup(addr));
+        return llc_entry;
+    }
+
+	State getState(TBE tbe, LLC_Entry cache_entry, Addr addr) {
+		if (is_valid(tbe)) {
+			return tbe.TBEState;
+		} else if (directory.isPresent(addr)) {
+			return getDirectoryEntry(addr).DirState;
+		} else {
+			return State:I;
+		}
+	}
+
+	void setState(TBE tbe, LLC_Entry cache_entry, Addr addr, State state) {
+
+		if (is_valid(tbe)) {
+			tbe.TBEState := state;
+		}
+
+		if (directory.isPresent(addr)) {
+			if (state == State:E) {
+				DPRINTF(RubySlicc, "Owners %s. Count: %d. Address: 0x%x\n", getDirectoryEntry(addr).Owner, getDirectoryEntry(addr).Owner.count(), addr);
+				assert(getDirectoryEntry(addr).Owner.count() == 1);
+			}
+
+			getDirectoryEntry(addr).DirState := state;
+
+			if (state == State:I)  {
+				assert(getDirectoryEntry(addr).Owner.count() == 0);
+			}
+		}
+	}
+
+	AccessPermission getAccessPermission(Addr addr) {
+		TBE tbe := TBEs[addr];
+		if(is_valid(tbe)) {
+		return Directory_State_to_permission(tbe.TBEState);
+		}
+
+		if(directory.isPresent(addr)) {
+		return Directory_State_to_permission(getDirectoryEntry(addr).DirState);
+		}
+
+		return AccessPermission:NotPresent;
+	}
+
+	void setAccessPermission(LLC_Entry cache_entry, Addr addr, State state) {
+		if (directory.isPresent(addr)) {
+		getDirectoryEntry(addr).changePermission(Directory_State_to_permission(state));
+		}
+	}
+
+	void functionalRead(Addr addr, Packet *pkt) {
+		// if this is called; state is always either invalid or data was just been WB
+		// to memory (and we are waiting for an ack), so go directly to memory
+		functionalMemoryRead(pkt);
+	}
+
+	int functionalWrite(Addr addr, Packet *pkt) {
+		int num_functional_writes := 0;
+
+		TBE tbe := TBEs[addr];
+		if(is_valid(tbe)) {
+		num_functional_writes := num_functional_writes +
+				testAndWrite(addr, tbe.DataBlk, pkt);
+		}
+
+		num_functional_writes := num_functional_writes + functionalMemoryWrite(pkt);
+		return num_functional_writes;
+	}
+
+	int max(int i1, int i2){
+		if(i1 > i2){
+			return i1;
+		}else{
+			return i2;
+		}
+	}
+	
+	int max(int i1, int i2, int i3){
+		if (i1 >= i2 && i1 >= i3) {
+        	return i1;
+		} else if (i2 >= i1 && i2 >= i3) {
+			return i2;
+		} else {
+			return i3;
+		}
+	}
+
+    /*************************************************************************/	
+    // Input/output network definitions
+	
+	//Output port of Timestamp Manager used to send FLUSH_REQ and WB_REQ to Caches
+    out_port(forward_out, RequestMsg, forwardToCache);
+	
+	//Output port of Timestamp Manager used to send SH_REP, EX_REP, RENEW_REP and UPGR_REP to Caches
+    out_port(response_out, ResponseMsg, responseToCache);
+	
+	//Output port of Timestamp Manager used to send MEM_REQ to Memory DRAM
+    out_port(memQueue_out, MemoryMsg, requestToMemory);
+
+    in_port(memQueue_in, MemoryMsg, responseFromMemory) {
+        if (memQueue_in.isReady(clockEdge())) {
+            peek(memQueue_in, MemoryMsg) {
+				DPRINTF(RubySlicc, "Received in memQueue_in %s with address 0x%x\n", in_msg.Type, in_msg.addr);
+				TBE tbe := TBEs[in_msg.addr];
+				LLC_Entry cache_entry := getLLCEntry(in_msg.addr);
+				
+                if (in_msg.Type == MemoryRequestType:MEMORY_READ) {	//If the request is MEMORY READ
+				    trigger(Event:Memory_Data, in_msg.addr, cache_entry, tbe);			//Trigger a Memory_Data (datablock arrived to TM)
+                } else if (in_msg.Type == MemoryRequestType:MEMORY_WB) {//If the request is MEMORY WB
+                    trigger(Event:Memory_Ack, in_msg.addr, cache_entry, tbe);			//Trigger a Memory_Ack (Write of data to Memory finished)
+                } else {
+                    error("Invalid message");
+                }
+            }
+        }
+    }
+
+	//Input port to get the follows responses FLUSH_REP and WB_REP from Caches
+    in_port(response_in, ResponseMsg, responseFromCache) {
+        if (response_in.isReady(clockEdge())) {
+            peek(response_in, ResponseMsg) {
+				assert(machineIDToMachineType(in_msg.Sender) == MachineType:L1Cache);
+				Entry dir_entry := getDirectoryEntry(in_msg.addr);
+				DPRINTF(RubySlicc, "Received in response_in %s with address 0x%x from cache %s and state %s\n", in_msg.Type, in_msg.addr, in_msg.Sender, dir_entry.DirState);
+				TBE tbe := TBEs[in_msg.addr];
+				LLC_Entry cache_entry := getLLCEntry(in_msg.addr);
+
+				mts := max(mts, in_msg.rts);
+				if (in_msg.Type == CoherenceResponseType:FLUSH_REP) {
+                    trigger(Event:FlushRep, in_msg.addr, cache_entry, tbe);
+				} else if(in_msg.Type == CoherenceResponseType:WB_REP) {
+					trigger(Event:FlushRep, in_msg.addr, cache_entry, tbe);
+				} else if(in_msg.Type == CoherenceResponseType:PUT_REP) {
+					trigger(Event:FlushRep, in_msg.addr, cache_entry, tbe);
+				} else {
+                    error("Unexpected message type.");
+                }
+            }
+        }
+    }
+
+	//Input port to get the follows requests SH_REQ, EX_REQ
+    in_port(request_in, RequestMsg, requestFromCache) {
+        if (request_in.isReady(clockEdge())) {
+            peek(request_in, RequestMsg) {
+				Entry dir_entry := getDirectoryEntry(in_msg.addr);
+				TBE tbe := TBEs[in_msg.addr];
+				LLC_Entry cache_entry := getLLCEntry(in_msg.addr);
+                DPRINTF(RubySlicc, "Received in request_in %s with address 0x%x (%s) from cache %s. %d. Owner: %s. Requestor==Owner %d \n",
+						in_msg.Type, in_msg.addr, dir_entry.DirState, in_msg.Requestor, mts, dir_entry.Owner, dir_entry.Owner.isElement(in_msg.Requestor));
+				
+				if (in_msg.Type == CoherenceRequestType:SH_REQ) {
+					dir_entry.rts := max(dir_entry.rts, dir_entry.wts + lease, in_msg.lts + lease);
+					if (is_valid(cache_entry)) {
+						trigger(Event:ShReq_Hit, in_msg.addr, cache_entry, tbe);
+					} else {
+						trigger(Event:ShReq, in_msg.addr, cache_entry, tbe);
+					}
+				} else if(in_msg.Type == CoherenceRequestType:EX_REQ) {	//If the request is EX_REQ
+					if(in_msg.wts == dir_entry.wts && in_msg.wts > 0){ //prima c'era dir_entry.wts
+						trigger(Event:UpgReq, in_msg.addr, cache_entry, tbe);
+					}else{
+						if (is_valid(cache_entry)) {
+							trigger(Event:ExReq_Hit, in_msg.addr, cache_entry, tbe);
+						} else {
+							trigger(Event:ExReq, in_msg.addr, cache_entry, tbe);	//Send a memory request
+						}
+					}
+				} else {
+                    error("Unexpected message type.");
+                }
+            }
+        }
+    }
+
+
+
+    /*************************************************************************/
+	/**Tardis TSO actions*/
+	// Below are all of the actions that might be taken on a transition.
+	
+	action(sendMemoryRequest, "sMR", desc="Send a memory request to DRAM to get a block"){
+		DPRINTF(RubySlicc, "Send to memory a request with address 0x%x\n", address);
+		peek(request_in, RequestMsg){
+			enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+				out_msg.addr := address;
+				out_msg.Type := MemoryRequestType:MEMORY_READ;
+				out_msg.Sender := machineID;
+				out_msg.OriginalRequestorMachId := in_msg.Requestor;
+				out_msg.MessageSize := MessageSizeType:Request_Control;
+				out_msg.Len := 0;
+			}
+		}
+	}
+	
+	action(sendShDataToReq, "sSDTR", desc="Send the block in read permission to the Cache Requestor (with a lease)"){
+		peek(memQueue_in, MemoryMsg) {
+			Entry dir_entry := getDirectoryEntry(address);
+			DPRINTF(RubySlicc, "Send to %s block 0x%x [%s]\n", tbe.Requestor, address, in_msg.DataBlk);
+			dir_entry.rts := max(dir_entry.rts, dir_entry.wts + lease, tbe.lts + lease);
+            enqueue(response_out, ResponseMsg, 1) {
+                out_msg.addr := address;
+                out_msg.Sender := machineID;
+                out_msg.Destination.clear();
+				out_msg.Destination.add(tbe.Requestor);
+				out_msg.rts := dir_entry.rts;
+				if(tbe.wts == dir_entry.wts && dir_entry.wts > 0){
+					out_msg.Type := CoherenceResponseType:RENEW_REP;
+                	out_msg.MessageSize := MessageSizeType:Control;
+				}else{
+					out_msg.Type := CoherenceResponseType:SH_REP;
+					out_msg.MessageSize := MessageSizeType:Data;
+					out_msg.DataBlk := in_msg.DataBlk;       
+					out_msg.wts := dir_entry.wts;        	
+				}				
+            }
+        }
+	}
+	
+	action(sendShTBEDataToReq, "sSDTRRR", desc=""){
+		Entry dir_entry := getDirectoryEntry(address);
+		DPRINTF(RubySlicc, "Send (WB) to %s block 0x%x [%s]\n", tbe.Requestor, address, tbe.DataBlk);
+		enqueue(response_out, ResponseMsg, 1){
+			out_msg.addr := tbe.PhysicalAddress;
+            out_msg.Type := CoherenceResponseType:SH_REP;
+            out_msg.Sender := machineID;
+			out_msg.Destination.clear();
+			out_msg.Destination.add(tbe.Requestor);
+            out_msg.DataBlk := tbe.DataBlk;
+            out_msg.MessageSize := MessageSizeType:Data;
+			dir_entry.rts := max(dir_entry.rts, dir_entry.wts + lease, tbe.lts + lease);
+			out_msg.wts := dir_entry.wts;
+			out_msg.rts := dir_entry.rts;
+		}
+	}
+
+	action(sendExDataToReq, "sEDTR", desc="Send the block in read-write permission to the Cache Requestor"){
+		peek(memQueue_in, MemoryMsg) {
+			Entry dir_entry := getDirectoryEntry(address);
+			DPRINTF(RubySlicc, "Send to %s block 0x%x [%s]\n", tbe.Requestor, address, in_msg.DataBlk);
+            enqueue(response_out, ResponseMsg, 1) {
+                out_msg.addr := address;
+                out_msg.Type := CoherenceResponseType:EX_REP;
+                out_msg.Sender := machineID;
+				out_msg.Destination.clear();
+				out_msg.Destination.add(tbe.Requestor);
+				out_msg.DataBlk := in_msg.DataBlk;
+                out_msg.MessageSize := MessageSizeType:Data;
+				out_msg.rts := dir_entry.rts;
+				out_msg.wts := dir_entry.wts;
+            }
+        }
+	}
+
+	action(sendShDataFromLLC, "sSDFL", desc="Send the block in read permission to the Cache Requestor from LLC"){
+		peek(request_in, RequestMsg) {
+			Entry dir_entry := getDirectoryEntry(address);
+			DPRINTF(RubySlicc, "Send to %s block 0x%x from LLC [%s]\n", in_msg.Requestor, address, cache_entry.DataBlk);
+			DPRINTF(TectreeLLC, "LLC HIT (GetS)! Servendo il blocco 0x%x alla cache %s direttamente dalla LLC.\n", address, in_msg.Requestor);
+            enqueue(response_out, ResponseMsg, 1) {
+                out_msg.addr := address;
+                out_msg.Sender := machineID;
+                out_msg.Destination.clear();
+				out_msg.Destination.add(in_msg.Requestor);
+				out_msg.rts := dir_entry.rts;
+				if(in_msg.wts == dir_entry.wts && dir_entry.wts > 0){
+					out_msg.Type := CoherenceResponseType:RENEW_REP;
+                	out_msg.MessageSize := MessageSizeType:Control;
+				}else{
+					out_msg.Type := CoherenceResponseType:SH_REP;
+					out_msg.MessageSize := MessageSizeType:Data;
+					out_msg.DataBlk := cache_entry.DataBlk;       
+					out_msg.wts := dir_entry.wts;        	
+				}				
+            }
+        }
+	}
+
+	action(sendExDataFromLLC, "sEDFL", desc="Send the block in read-write permission to the Cache Requestor from LLC"){
+		peek(request_in, RequestMsg) {
+			Entry dir_entry := getDirectoryEntry(address);
+			DPRINTF(RubySlicc, "Send to %s block 0x%x from LLC [%s]\n", in_msg.Requestor, address, cache_entry.DataBlk);
+			DPRINTF(TectreeLLC, "LLC HIT (GetM)! Servendo il blocco 0x%x alla cache %s direttamente dalla LLC.\n", address, in_msg.Requestor);
+            enqueue(response_out, ResponseMsg, 1) {
+                out_msg.addr := address;
+                out_msg.Type := CoherenceResponseType:EX_REP;
+                out_msg.Sender := machineID;
+				out_msg.Destination.clear();
+				out_msg.Destination.add(in_msg.Requestor);
+				out_msg.DataBlk := cache_entry.DataBlk;
+                out_msg.MessageSize := MessageSizeType:Data;
+				out_msg.rts := dir_entry.rts;
+				out_msg.wts := dir_entry.wts;
+            }
+        }
+	}
+
+
+	action(sendExTBEDataToReq, "sETBEDTR", desc=""){
+		assert(is_valid(tbe));
+		enqueue(response_out, ResponseMsg, 1){
+			out_msg.addr := address;
+			out_msg.Type := CoherenceResponseType:EX_REP;
+			out_msg.Sender := machineID;
+			out_msg.Destination.clear();
+			out_msg.Destination.add(tbe.Requestor);
+			out_msg.DataBlk := tbe.DataBlk;
+			out_msg.MessageSize := MessageSizeType:Data;
+		}
+	}
+
+	action(sendWritebackRequest, "sWR", desc="Send a WB_REQ to the Owner due to a Shared request of another Cache"){
+		peek(request_in, RequestMsg){
+			Entry dir_entry := getDirectoryEntry(address);
+			DPRINTF(RubySlicc, "Send to %s block 0x%x [wb req]\n", dir_entry.Owner, address);
+			enqueue(forward_out, RequestMsg, directory_latency){
+				out_msg.addr := address;
+				out_msg.Type := CoherenceRequestType:WB_REQ;
+				out_msg.Requestor := machineID;
+				out_msg.Destination.clear();
+				out_msg.Destination := dir_entry.Owner;
+				out_msg.MessageSize := MessageSizeType:Control;
+				out_msg.rts := in_msg.lts + lease;
+			}
+		}
+	}
+	
+	action(sendFlushReq, "sFR", desc="Send a FLUSH_REQ to the owner due to an Exclusive request of another Cache"){
+		peek(request_in, RequestMsg){
+			Entry dir_entry := getDirectoryEntry(address);
+			DPRINTF(RubySlicc, "Send flush request to %s with address 0x%x [%s]\n", dir_entry.Owner, address);
+			enqueue(forward_out, RequestMsg, directory_latency){
+				out_msg.addr := address;
+				out_msg.Type := CoherenceRequestType:FLUSH_REQ;
+				out_msg.Requestor := machineID;
+				out_msg.Destination.clear();
+				out_msg.Destination := dir_entry.Owner;
+				out_msg.MessageSize := MessageSizeType:Control;
+			}
+		}
+	}
+
+	action(sendBlockToMem, "sBTM", desc="When the TM get the block, send it to Memory and wait for the Ack"){
+		DPRINTF(RubySlicc, "Send WB to memory address 0x%x\n", address);
+		peek(response_in, ResponseMsg){
+			enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+				out_msg.addr := address;
+				out_msg.Type := MemoryRequestType:MEMORY_WB;
+				out_msg.Sender := machineID;
+				out_msg.MessageSize := MessageSizeType:Writeback_Data;
+				out_msg.DataBlk := in_msg.DataBlk;
+			}
+		}
+    }
+
+	action(sendUpgradeRep, "sURes", desc=""){
+		Entry dir_entry := getDirectoryEntry(address);
+		DPRINTF(RubySlicc, "Send to cache an Upgrade response address 0x%x\n", address);
+		peek(request_in, RequestMsg){
+			enqueue(response_out, ResponseMsg, directory_latency) {
+				out_msg.addr := address;
+            	out_msg.Type := CoherenceResponseType:UPGR_REP;
+           		out_msg.Sender := machineID;
+				out_msg.Destination.clear();
+				out_msg.Destination.add(in_msg.Requestor);
+            	out_msg.MessageSize := MessageSizeType:Control;
+				out_msg.rts := dir_entry.rts;
+			}
+		}
+	}
+
+	action(setMemoryTimestamps, "sMTs", desc=""){
+		peek(memQueue_in, MemoryMsg){
+			Entry dir_entry := getDirectoryEntry(address);
+			dir_entry.wts := mts;
+			dir_entry.rts := mts;
+		}
+	}
+
+	}
+
+	action(setOwner_ReqIn, "sOR", desc="Set the owner") {
+		peek(request_in, RequestMsg){
+			assert(machineIDToMachineType(in_msg.Requestor) == MachineType:L1Cache);
+			assert(getDirectoryEntry(address).Owner.count() == 0);
+			getDirectoryEntry(address).Owner.add(in_msg.Requestor);
+			DPRINTF(RubySlicc, "New owner (req in): %s\n", in_msg.Requestor);
+		}
+    }
+
+	action(setOwner, "sO", desc="Set the owner") {
+		assert(is_valid(tbe));
+		assert(machineIDToMachineType(tbe.Requestor) == MachineType:L1Cache);
+		getDirectoryEntry(address).Owner.clear();
+    	getDirectoryEntry(address).Owner.add(tbe.Requestor);
+		DPRINTF(RubySlicc, "New owner: %s\n", tbe.Requestor);
+    }
+	
+	action(clearOwner, "cO", desc="Clear the owner") {
+		getDirectoryEntry(address).Owner.clear();
+    }
+	
+	action(storeDataBlockTBE, "sDBTBE", desc="Store in TBE entry the datablock from response queue."){
+		peek(response_in, ResponseMsg) {
+			assert(is_valid(tbe));
+			tbe.DataBlk := in_msg.DataBlk;
+		}
+	}
+
+	action(storeLtsTBE_ReqIn, "sLTBEREQ", desc="Store in TBE entry the lts from request queue."){
+		peek(request_in, RequestMsg){
+			assert(is_valid(tbe));
+			tbe.lts := in_msg.lts;
+		}
+	}
+
+	action(storeLtsTBE_RepIn, "sLTBEREP", desc="Store in TBE entry the lts from response queue."){
+		peek(response_in, ResponseMsg){
+			assert(is_valid(tbe));
+			tbe.lts := in_msg.lts;
+		}
+	}
+
+    action(storeTimestampsTBE_ReqIn, "sTTBEREQ", desc="Store in TBE entry the wts and rts from request queue."){
+		peek(request_in, RequestMsg){
+			assert(is_valid(tbe));
+			tbe.wts := in_msg.wts;
+			tbe.rts := in_msg.rts;
+		}
+	}
+
+	action(storeTimestampsTBE_RepIn, "sTTBEREP", desc="Store in TBE entry the wts and rts from response queue."){
+		peek(response_in, ResponseMsg){
+			assert(is_valid(tbe));
+			tbe.wts := in_msg.wts;
+			tbe.rts := in_msg.rts;
+		}
+	}
+
+	action(storeTimestamps_RepIn, "sTs", desc="Store in Directory entry the wts and rts from response queue."){
+		Entry dir_entry := getDirectoryEntry(address);
+		peek(response_in, ResponseMsg){
+			dir_entry.wts := in_msg.wts;
+			dir_entry.rts := in_msg.rts;
+		}
+	}
+
+	action(allocateTBE_ReqIn, "aTBE", desc="Allocate TBE with Request message info.") {
+		peek(request_in, RequestMsg) {
+			TBEs.allocate(address);
+			set_tbe(TBEs[address]);
+			tbe.PhysicalAddress := in_msg.addr;
+			tbe.Requestor := in_msg.Requestor;
+			DPRINTF(RubySlicc, "Allocated TBE [Requestor: %s, Address: 0x%x]\n", tbe.Requestor, tbe.PhysicalAddress);
+		}
+	}
+	
+	action(allocateTBE_RepIn, "aTBER", desc="Allocate TBE with Response message info.") {
+		peek(response_in, ResponseMsg) {
+			TBEs.allocate(address);
+			set_tbe(TBEs[address]);
+			tbe.PhysicalAddress := in_msg.addr;
+			tbe.Requestor := in_msg.Sender;
+			DPRINTF(RubySlicc, "Allocated TBE Response [Requestor: %s, Address: 0x%x]\n", tbe.Requestor, tbe.PhysicalAddress);
+		}
+	}
+
+	action(deallocateTBE, "w", desc="Deallocate TBE") {
+		assert(is_valid(tbe));
+		TBEs.deallocate(address);
+		unset_tbe();
+	}
+
+	action(sendAckRepTBE, "sART", desc="Send to requestor in TBE the acknoledgement response."){
+		assert(is_valid(tbe));
+		enqueue(response_out, ResponseMsg, 1){
+			out_msg.addr := tbe.PhysicalAddress;
+			out_msg.Type := CoherenceResponseType:ACK_REP;
+			out_msg.Destination.clear();
+			out_msg.Destination.add(tbe.Requestor);
+			out_msg.Sender := machineID;
+			out_msg.MessageSize := MessageSizeType:Control;
+		}
+	}
+
+    // LLC Actions
+    action(allocateLLC, "all", desc="Allocate LLC block") {
+        if (is_invalid(cache_entry)) {
+            set_cache_entry(LLC.allocate(address, new LLC_Entry));
+        }
+    }
+
+    action(allocateOrUpdateLLC, "aLLC", desc="Allocate or update LLC block on Put") {
+        peek(response_in, ResponseMsg) {
+            if (is_valid(cache_entry)) {
+				DPRINTF(TectreeLLC, "LLC UPDATE: Aggiornamento dei dati per il blocco 0x%x in LLC a seguito di un eviction.\n", address);
+                cache_entry.DataBlk := in_msg.DataBlk;
+                LLC.setMRU(address);
+            } else {
+                if (LLC.cacheAvail(address) == false) {
+                    Addr victim := LLC.cacheProbe(address);
+                    LLC.deallocate(victim);
+					DPRINTF(TectreeLLC, "LLC EVICTION: Eviction del blocco 0x%x dalla LLC per far spazio al blocco 0x%x.\n", victim, address);
+                }
+				DPRINTF(TectreeLLC, "LLC ALLOCATE: Allocazione di un nuovo blocco 0x%x in LLC a seguito di un eviction.\n", address);
+                set_cache_entry(LLC.allocate(address, new LLC_Entry));
+                cache_entry.DataBlk := in_msg.DataBlk;
+            }
+        }
+    }
+
+	action(allocateOrUpdateLLCFromMem, "aLLCM", desc="Allocate or update a block in LLC from Memory") {
+		peek(memQueue_in, MemoryMsg) {
+			if (is_valid(cache_entry)) {
+				DPRINTF(TectreeLLC, "LLC UPDATE: Aggiornamento dei dati per il blocco 0x%x in LLC a seguito di una Memory_Data.\n", address);
+				cache_entry.DataBlk := in_msg.DataBlk;
+				LLC.setMRU(address);
+			} else {
+				if (LLC.cacheAvail(address) == false) {
+					Addr victim := LLC.cacheProbe(address);
+					LLC.deallocate(victim);
+					DPRINTF(TectreeLLC, "LLC EVICTION: Eviction del blocco 0x%x dalla LLC per far spazio al blocco 0x%x (da Memoria).\n", victim, address);
+				}
+				DPRINTF(TectreeLLC, "LLC ALLOCATE: Allocazione di un nuovo blocco 0x%x in LLC a seguito di una Memory_Data.\n", address);
+				set_cache_entry(LLC.allocate(address, new LLC_Entry));
+				cache_entry.DataBlk := in_msg.DataBlk;
+			}
+		}
+	}
+
+    action(deallocateLLC, "dea", desc="Deallocate LLC block") {
+        if (is_valid(cache_entry)) {
+            LLC.deallocate(address);
+            unset_cache_entry();
+        }
+    }
+
+    action(setMRU, "mru", desc="Set MRU") {
+        if (is_valid(cache_entry)) {
+            LLC.setMRU(address);
+        }
+    }
+
+    // Queue management
+    action(popResponseQueue, "pR", desc="Pop the response queue") {
+        response_in.dequeue(clockEdge());
+    }
+
+    action(popRequestQueue, "pQ", desc="Pop the request queue") {
+        request_in.dequeue(clockEdge());
+    }
+
+    action(popMemQueue, "pM", desc="Pop the memory queue") {
+        dequeueMemRespQueue();
+    }
+
+    // Stalling actions
+    action(stall, "z", desc="Stall the incoming request") {
+        // Do nothing.
+    }
+
+
+    /*************************************************************************/
+	///TARDIS TSO Transitions
+	
+	transition(I, ShReq, IS){
+		allocateTBE_ReqIn;
+		storeLtsTBE_ReqIn;
+		storeTimestampsTBE_ReqIn;
+		sendMemoryRequest;
+		popRequestQueue;
+	}
+
+	transition(I, ShReq_Hit, S) {
+		sendShDataFromLLC;
+		setMRU;
+		popRequestQueue;
+	}
+	
+	transition(I, ExReq, IE){
+		allocateTBE_ReqIn;
+		sendMemoryRequest;
+		popRequestQueue;
+	}
+
+	transition(I, ExReq_Hit, E) {
+		updateWtsForWriteHit;
+		sendExDataFromLLC;
+		setOwner_ReqIn;
+		setMRU;
+		popRequestQueue;
+	}
+	
+	transition(IS, Memory_Data, S){
+		setMemoryTimestamps;
+		allocateOrUpdateLLCFromMem;
+		sendShDataToReq;
+		deallocateTBE;
+        popMemQueue;	
+	}
+
+	transition(IE, Memory_Data, E){
+		setMemoryTimestamps;
+		allocateOrUpdateLLCFromMem;
+		sendExDataToReq;
+		setOwner;
+		deallocateTBE;
+        popMemQueue;
+	}
+	
+	transition(S, ShReq, IS){
+		allocateTBE_ReqIn;
+		storeLtsTBE_ReqIn;
+		storeTimestampsTBE_ReqIn;
+		sendMemoryRequest;
+		popRequestQueue;
+	}
+
+	transition(S, ShReq_Hit, S) {
+		sendShDataFromLLC;
+		setMRU;
+		popRequestQueue;
+	}
+
+	transition(S, ExReq, SE){
+		allocateTBE_ReqIn;
+		sendMemoryRequest;
+		popRequestQueue;	
+	}
+
+	transition(S, ExReq_Hit, E) {
+		updateWtsForWriteHit;
+		sendExDataFromLLC;
+		setOwner_ReqIn;
+		setMRU;
+		popRequestQueue;
+	}
+
+	transition(S, UpgReq, E){
+		setOwner_ReqIn;
+		sendUpgradeRep;
+		popRequestQueue;
+	}
+
+	transition(SE, Memory_Data, E){
+		setMemoryTimestamps;
+		sendExDataToReq;
+		setOwner;
+		deallocateTBE;
+        popMemQueue;
+	}
+	
+	transition(E, FlushRep, ES_m){
+		allocateTBE_RepIn;
+		storeTimestamps_RepIn;
+		allocateOrUpdateLLC;
+		sendBlockToMem;
+		clearOwner;
+		popResponseQueue;
+	}
+
+	transition(ES_m, Memory_Ack, S){
+		sendAckRepTBE;
+		deallocateTBE;
+		popMemQueue;
+	}
+
+	transition(E, {ShReq, ShReq_Hit}, ES){
+		allocateTBE_ReqIn;
+		sendWritebackRequest;
+		clearOwner;
+		popRequestQueue;
+	}
+
+	transition(ES, FlushRep, SS_m){
+		storeDataBlockTBE;
+		storeLtsTBE_RepIn;
+		storeTimestampsTBE_RepIn;
+		storeTimestamps_RepIn;
+		allocateOrUpdateLLC;
+		sendBlockToMem;
+		popResponseQueue;
+	}
+
+	transition(SS_m, Memory_Ack, S){
+		sendShTBEDataToReq;
+		deallocateTBE;
+		popMemQueue;
+	}
+	
+	transition(E, {ExReq, ExReq_Hit, UpgReq}, EE){
+		allocateTBE_ReqIn;
+		sendFlushReq;
+		clearOwner;
+        popRequestQueue;
+	}
+
+	transition(EE, FlushRep, E_m){
+		storeDataBlockTBE;
+		storeLtsTBE_RepIn;
+		storeTimestampsTBE_RepIn;
+		storeTimestamps_RepIn;
+		allocateOrUpdateLLC;
+		sendBlockToMem;
+		popResponseQueue;
+	}
+	
+	transition(E_m, Memory_Ack, E){
+		sendExTBEDataToReq;
+		setOwner;
+		deallocateTBE;
+		popMemQueue;
+	}
+
+	transition({IS, IE}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq}){
+		stall;	//TODO: For IS case, to acquire better performance, it should not block simultaneous Shared Requests.
+	}
+
+	transition({ES, SE, EE, ES_m, E_m, SS_m}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq}) {
+		stall;
+	}
+}

@@ -1,0 +1,6 @@
+protocol "TARDISTSO_TECTREE";
+include "RubySlicc_interfaces.slicc";
+include "TARDISTSO_TECTREE-msg.sm";
+include "TARDISTSO_TECTREE-dma.sm";
+include "TARDISTSO_TECTREE-cache.sm";
+include "TARDISTSO_TECTREE-dir.sm";

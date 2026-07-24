@@ -1,0 +1,680 @@
+ /*
+ * Copyright (c) 2009-2012 Mark D. Hill and David A. Wood
+ * Copyright (c) 2010-2012 Advanced Micro Devices, Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are
+ * met: redistributions of source code must retain the above copyright
+ * notice, this list of conditions and the following disclaimer;
+ * redistributions in binary form must reproduce the above copyright
+ * notice, this list of conditions and the following disclaimer in the
+ * documentation and/or other materials provided with the distribution;
+ * neither the name of the copyright holders nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/// Declare a machine with type L1Cache.
+machine(MachineType:L1Cache, "TARDIS TSO L1 Cache")
+    : Sequencer *sequencer;
+      CacheMemory *cacheMemory;
+      bool send_evictions; // Needed to support O3 CPU and mwait
+	  int sts := 1;	
+	  int lts := 1;	//Load timestamp. Initially 0
+	  int lease;   //Lease to add to the timestamp of a requested block
+	  Cycles cache_response_latency := 12;
+      Cycles issue_latency := 2;
+
+	  // Requests *to* the directory: SH_REQ, EX_REQ
+      MessageBuffer * requestToDir, network="To", virtual_network="0", vnet_type="request";
+      // Responses *to* the directory or other caches: FLUSH_REP, WB_REP, PUT_REP
+      MessageBuffer * responseToDir, network="To", virtual_network="2", vnet_type="response";
+
+      // Requests *from* the directory: FLUSH_REQ, WB_REQ
+      MessageBuffer * forwardFromDir, network="From", virtual_network="1", vnet_type="forward";
+      // Responses *from* directory and other caches for this cache's reqs: SH_REP, EX_REP, RENEW_REP, UPGRADE_REP
+      MessageBuffer * responseFromDir, network="From", virtual_network="2", vnet_type="response";
+
+      // This is all of the incoming requests from the core via the sequencer: Load, Store
+      MessageBuffer * mandatoryQueue;
+{
+    state_declaration(State, desc="Cache states") {
+		// Stable states
+        I,      AccessPermission:Invalid, desc="Not present/Invalid.";
+		S_LSD,  AccessPermission:Read_Only, desc="Shared Leased. Read-only, other caches may have the block.";
+		E,      AccessPermission:Read_Write, desc="Exclusive. Read and write permissions.";
+		
+		// Transient states
+		//From Invalid to Shared/Exclusive
+		IS,		AccessPermission:Invalid, desc="Not present/Invalid. Transistion state from Invalid to Shared. Wait for Data with Lease.";
+        IE,		AccessPermission:Invalid, desc="Not present/Invalid. Transistion state from Invalid to Exclusive. Wait for Data.";
+        //From Shared to Exclusive
+		SE,		AccessPermission:Busy, desc="Shared. Transition state from Shared to Exclusive. Wait an Exclusive or Upgrade response.";
+		//From Exclusive to Shared
+		ES,		AccessPermission:Busy, 	desc="Exclusive. Transition state from Exclusive to Shared";
+		SS,		AccessPermission:Busy, desc="Shared busy. Transition state from Exclusive to Shared. Waiting for Ack from directory.";
+		//Shared Leased-Shared Expired
+		S_EXP,  AccessPermission:Busy, desc="Shared cacheline is expired. It need to wait for a RENEW_REP or SH_REP.";
+        //From Exclusive to Invalid        
+		EI,		AccessPermission:Busy,	desc="Exclusive to Invalid due to Eviction.";
+    }
+
+    enumeration(Event, desc="Cache events") {
+        Load,           desc="Load from processor";
+        Store,          desc="Store from processor";
+        Eviction,    	desc="Triggered when block is chosen as victim";
+		LoadLeaseExpired, desc="Triggered when a block is expired";
+
+        ShRep,        	desc="Shared response from Timestamp Manager";
+        ExRep,        	desc="Exclusive response from Timestamp Manager";
+		FlushReq,  		desc="Flush request from Timestamp Manager";
+		RenewRep,		desc="Renew response from Timestamp Manager";
+		UpgRep,			desc="Upgrade response from Timestamp Manger";
+		AckRep,			desc="Ack Response from Timestamp Manager";
+	}
+
+    structure(Entry, desc="Cache entry", interface="AbstractCacheEntry") {
+        State CacheState,        desc="Cache state";
+		int wts,	default=0, 	 desc="Write timestamp";
+		int rts, 	default=0,   desc="Read timestamp (lease)";
+		int load_counter, default=0, desc="Number of times of Loads were made on this block. Used for Livelock prevention.";
+		int livelock_period, default=32, desc="Period of livelock prevention.";
+		DataBlock DataBlk,       desc="Data in the block";
+    }
+
+    structure(TBE, desc="Entry for transient requests") {
+        State TBEState,         desc="State of block";
+        DataBlock DataBlk,      desc="Data for the block. Needed for state transitions";
+    }
+
+    structure(TBETable, external="yes") {
+      TBE lookup(Addr);
+      void allocate(Addr);
+      void deallocate(Addr);
+      bool isPresent(Addr);
+    }
+
+    /*************************************************************************/
+    // Some declarations of member functions and member variables.
+
+    TBETable TBEs, template="<L1Cache_TBE>", constructor="m_number_of_TBEs";
+
+    Tick clockEdge();
+
+    void set_cache_entry(AbstractCacheEntry a);
+    void unset_cache_entry();
+    void set_tbe(TBE b);
+    void unset_tbe();
+
+    MachineID mapAddressToMachine(Addr addr, MachineType mtype);
+
+    Entry getCacheEntry(Addr address), return_by_pointer="yes" {
+        return static_cast(Entry, "pointer", cacheMemory.lookup(address));
+    }
+
+    /*************************************************************************/
+    // Functions that we need to define/override to use our specific structures
+    // in this implementation.
+
+    State getState(TBE tbe, Entry cache_entry, Addr addr) {
+        if (is_valid(tbe)) { return tbe.TBEState; }
+        else if (is_valid(cache_entry)) {
+			return cache_entry.CacheState;
+		}
+        else { return State:I; }
+    }
+
+    void setState(TBE tbe, Entry cache_entry, Addr addr, State state) {
+      if (is_valid(tbe)) { tbe.TBEState := state; }
+      if (is_valid(cache_entry)) { cache_entry.CacheState := state; }
+    }
+
+    AccessPermission getAccessPermission(Addr addr) {
+        TBE tbe := TBEs[addr];
+        if(is_valid(tbe)) {
+            return L1Cache_State_to_permission(tbe.TBEState);
+        }
+
+        Entry cache_entry := getCacheEntry(addr);
+        if(is_valid(cache_entry)) {
+            return L1Cache_State_to_permission(cache_entry.CacheState);
+        }
+
+        return AccessPermission:NotPresent;
+    }
+
+    void setAccessPermission(Entry cache_entry, Addr addr, State state) {
+        if (is_valid(cache_entry)) {
+            cache_entry.changePermission(L1Cache_State_to_permission(state));
+        }
+    }
+
+    void functionalRead(Addr addr, Packet *pkt) {
+        TBE tbe := TBEs[addr];
+		DPRINTF(RubySlicc, "functionalRead for address 0x%x\n", addr);
+        if(is_valid(tbe)) {
+            testAndRead(addr, tbe.DataBlk, pkt);
+        } else {
+            testAndRead(addr, getCacheEntry(addr).DataBlk, pkt);
+        }
+    }
+
+    int functionalWrite(Addr addr, Packet *pkt) {
+        TBE tbe := TBEs[addr];
+        if(is_valid(tbe)) {
+            if (testAndWrite(addr, tbe.DataBlk, pkt)) {
+                return 1;
+            } else {
+                return 0;
+            }
+        } else {
+            if (testAndWrite(addr, getCacheEntry(addr).DataBlk, pkt)) {
+                return 1;
+            } else {
+                return 0;
+            }
+        }
+    }
+
+	// Used in the comparison of timestamps.
+	int max(int i1, int i2){
+		if(i1 > i2){
+			return i1;
+		}else{
+			return i2;
+		}
+	}
+	
+	int max(int i1, int i2, int i3){
+		if (i1 >= i2 && i1 >= i3) {
+        	return i1;
+		} else if (i2 >= i1 && i2 >= i3) {
+			return i2;
+		} else {
+			return i3;
+		}
+	}
+    /*************************************************************************/
+    // Input/output network definitions
+
+    out_port(request_out, RequestMsg, requestToDir);
+	
+    out_port(response_out, ResponseMsg, responseToDir);
+	
+    in_port(response_in, ResponseMsg, responseFromDir) {
+        if (response_in.isReady(clockEdge())) {
+            peek(response_in, ResponseMsg) {
+				assert(in_msg.Destination.isElement(machineID));
+				assert(machineIDToMachineType(in_msg.Sender) == MachineType:Directory);
+				DPRINTF(RubySlicc, "Received in response_in %s with address 0x%x\n", in_msg.Type, in_msg.addr);
+				
+				Entry cache_entry := getCacheEntry(in_msg.addr);
+                TBE tbe := TBEs[in_msg.addr];
+				if(in_msg.Type == CoherenceResponseType:SH_REP){
+					trigger(Event:ShRep, in_msg.addr, cache_entry, tbe);
+				}
+				else if(in_msg.Type == CoherenceResponseType:EX_REP){
+					trigger(Event:ExRep, in_msg.addr, cache_entry, tbe);
+				}
+				else if(in_msg.Type == CoherenceResponseType:UPGR_REP){
+					trigger(Event:UpgRep, in_msg.addr, cache_entry, tbe);
+				}
+				else if(in_msg.Type == CoherenceResponseType:RENEW_REP){
+					trigger(Event:RenewRep, in_msg.addr, cache_entry, tbe);
+				}
+				else if(in_msg.Type == CoherenceResponseType:ACK_REP){
+					trigger(Event:AckRep, in_msg.addr, cache_entry, tbe);
+				}
+				else{
+					error("Coherence Response Type not recognized.");
+				}
+			}
+        }
+    }
+
+
+    in_port(forward_in, RequestMsg, forwardFromDir) {
+        if (forward_in.isReady(clockEdge())) {
+            peek(forward_in, RequestMsg) {
+				assert(in_msg.Destination.isElement(machineID));
+				assert(machineIDToMachineType(in_msg.Requestor) == MachineType:Directory);
+				DPRINTF(RubySlicc, "Received in forward_in %s with address 0x%x\n", in_msg.Type, in_msg.addr);
+
+                Entry cache_entry := getCacheEntry(in_msg.addr);
+                TBE tbe := TBEs[in_msg.addr];
+                if (in_msg.Type == CoherenceRequestType:FLUSH_REQ) {	
+					trigger(Event:FlushReq, in_msg.addr, cache_entry, tbe);
+                } 
+				else if (in_msg.Type == CoherenceRequestType:WB_REQ) {
+					trigger(Event:FlushReq, in_msg.addr, cache_entry, tbe);
+				} 
+				else {
+                    error("Unexpected forward message!");
+                }
+            }
+        }
+    }
+
+
+    in_port(mandatory_in, RubyRequest, mandatoryQueue) {
+        if (mandatory_in.isReady(clockEdge())) {
+            peek(mandatory_in, RubyRequest, block_on="LineAddress") {
+				DPRINTF(RubySlicc, "in_msg.isMemBarrier = %d\n", in_msg.isMemBarrier);
+				if(in_msg.isMemBarrier){	//Check if the processor executed a BARRIER instruction (dmb, mfence, etc..)
+					DPRINTF(RubySlicc, "[MEMBARRIER] Memory barrier executed. Synchronizing timestamps\n");
+					lts := max(lts, sts);
+					sts := lts;
+				}
+				
+                Entry cache_entry := getCacheEntry(in_msg.LineAddress);
+                TBE tbe := TBEs[in_msg.LineAddress];
+				DPRINTF(RubySlicc, "Received in mandatory_in %s with address 0x%x\n", in_msg.Type, in_msg.LineAddress);
+				
+                // If there isn't a matching entry and no room in the cache,
+                // then we need to find a victim entry.
+                if (is_invalid(cache_entry) && cacheMemory.cacheAvail(in_msg.LineAddress) == false ) {
+					Addr addr := cacheMemory.cacheProbe(in_msg.LineAddress);
+                    Entry victim_entry := getCacheEntry(addr);
+                    TBE victim_tbe := TBEs[addr];
+                    trigger(Event:Eviction, addr, victim_entry, victim_tbe);
+                } else {
+					//If there is enough space in the cache..
+					if (in_msg.Type == RubyRequestType:IFETCH){
+						trigger(Event:Load, in_msg.LineAddress, cache_entry, tbe);
+					}
+					else if (in_msg.Type == RubyRequestType:LD) {
+						if(is_invalid(cache_entry)){
+							trigger(Event:Load, in_msg.LineAddress, cache_entry, tbe);
+						}else{
+							DPRINTF(RubySlicc, "Address: 0x%x. Rts: %d. Wts: %d. State: %s\n", in_msg.LineAddress, cache_entry.rts, cache_entry.wts, cache_entry.CacheState);
+							cache_entry.load_counter := cache_entry.load_counter +1;
+							if((cache_entry.load_counter)%cache_entry.livelock_period == 0){
+								lts := lts + 1;
+								cache_entry.load_counter := 0;
+								cache_entry.livelock_period := cache_entry.livelock_period/2;
+								if(cache_entry.livelock_period == 0){
+									cache_entry.livelock_period := 1;
+								}
+							}
+
+							if(lts <= cache_entry.rts){
+								trigger(Event:Load, in_msg.LineAddress, cache_entry, tbe);
+							}
+							else{
+								trigger(Event:LoadLeaseExpired, in_msg.LineAddress, cache_entry, tbe);
+							}
+						}
+					} else if (in_msg.Type == RubyRequestType:ST || in_msg.Type == RubyRequestType:ATOMIC) {
+						trigger(Event:Store, in_msg.LineAddress, cache_entry, tbe);
+					} else {
+                        error("Unexpected type from processor");
+                    }
+
+                }
+            }
+        }
+    }
+
+
+    /**************************************************************************
+	/**Tardis TSO actions*/
+	// Below are all of the actions that might be taken on a transition.
+	
+	action(sendSharedRequest, "sSR", desc="Send a SH_REQ to TM for a new block (load)"){
+		DPRINTF(RubySlicc, "Send to dir SH_REQ with address 0x%x\n", address);
+		enqueue(request_out, RequestMsg, issue_latency) {
+			out_msg.addr := address;
+			out_msg.Type := CoherenceRequestType:SH_REQ;
+			out_msg.Destination.clear();
+			out_msg.Destination.add(mapAddressToMachine(address,
+									MachineType:Directory));
+			out_msg.MessageSize := MessageSizeType:Control;
+			out_msg.Requestor := machineID;
+			out_msg.wts := 0;
+			out_msg.lts := lts;
+		}
+	}
+	
+	action(sendExclusiveRequest, "sER", desc="Send a EX_REQ to TM for a new block (store)"){
+		DPRINTF(RubySlicc, "Send to dir EX_REQ with address 0x%x\n", address);
+		enqueue(request_out, RequestMsg, issue_latency) {
+            out_msg.addr := address;
+            out_msg.Type := CoherenceRequestType:EX_REQ;
+			out_msg.Destination.clear();
+            out_msg.Destination.add(mapAddressToMachine(address,
+                                    MachineType:Directory));
+            out_msg.MessageSize := MessageSizeType:Control;
+            out_msg.Requestor := machineID;
+			out_msg.wts := 0;
+        }
+	}
+
+	action(storeDatablock, "gRB", desc="Store the datablock"){
+		peek(response_in, ResponseMsg) {
+            assert(is_valid(cache_entry));
+            cache_entry.DataBlk := in_msg.DataBlk;
+        }
+	}
+
+	action(storeTimestamps, "sTMs", desc="Store the timestamps"){
+		peek(response_in, ResponseMsg){
+			assert(is_valid(cache_entry));
+			cache_entry.wts := in_msg.wts;
+			cache_entry.rts := in_msg.rts;
+		}
+	}
+
+	action(updateLease, "uL", desc="Update the lease time"){
+		peek(response_in, ResponseMsg){
+			cache_entry.rts := in_msg.rts;
+		}
+	}
+
+	action(sendShReqNewLease, "sSRNL", desc="Send a SH_REQ to TM to request a new Lease"){
+		DPRINTF(RubySlicc, "Send to dir SH_REQ (expired) with address 0x%x\n", address);
+		enqueue(request_out, RequestMsg, issue_latency) {
+            out_msg.addr := address;
+            out_msg.Type := CoherenceRequestType:SH_REQ;
+			out_msg.Destination.clear();
+            out_msg.Destination.add(mapAddressToMachine(address,
+                                    MachineType:Directory));
+            out_msg.MessageSize := MessageSizeType:Control;
+            out_msg.Requestor := machineID;
+			out_msg.wts := cache_entry.wts;
+			out_msg.sts := sts;
+			out_msg.lts := lts;
+        }
+	}
+	
+	action(sendUpgradeReq, "sUR", desc="Send a EX_REQ to TM to request the upgrade"){
+		DPRINTF(RubySlicc, "Send to dir EX_REQ (upgrade) with address 0x%x\n", address);
+		enqueue(request_out, RequestMsg, issue_latency) {
+            out_msg.addr := address;
+            out_msg.Type := CoherenceRequestType:EX_REQ;
+			out_msg.Destination.clear();
+            out_msg.Destination.add(mapAddressToMachine(address,
+                                    MachineType:Directory));
+            out_msg.MessageSize := MessageSizeType:Control;
+            out_msg.Requestor := machineID;
+			out_msg.wts := cache_entry.wts;
+        }
+	}
+	
+	action(sendPutResponse, "sPR", desc="Send a PUT message to TM due to an Eviction"){
+		DPRINTF(RubySlicc, "Send to dir PUT_REP with address 0x%x\n", address);
+		enqueue(response_out, ResponseMsg, cache_response_latency){
+			out_msg.addr := address;
+			out_msg.Type := CoherenceResponseType:PUT_REP;
+			out_msg.Sender := machineID;
+			out_msg.Destination.clear();
+			out_msg.Destination.add(mapAddressToMachine(address, MachineType:Directory));
+			out_msg.MessageSize := MessageSizeType:Data;
+			out_msg.DataBlk := cache_entry.DataBlk;
+			out_msg.wts := cache_entry.wts;
+			out_msg.rts := cache_entry.rts;
+		}
+	}
+	
+	action(sendWritebackResponse, "sWR", desc="Send to TM the datablock due Writeback Request"){
+		DPRINTF(RubySlicc, "Send to dir WB_REP with address 0x%x\n", address);
+		peek(forward_in, RequestMsg){
+			enqueue(response_out, ResponseMsg, cache_response_latency) {
+				out_msg.addr := address;
+				out_msg.Type := CoherenceResponseType:WB_REP;
+				out_msg.Sender := machineID;
+				out_msg.Destination.clear();
+				out_msg.Destination.add(mapAddressToMachine(address, MachineType:Directory));
+				out_msg.MessageSize := MessageSizeType:Data;
+				out_msg.DataBlk := cache_entry.DataBlk;
+				cache_entry.rts := max(cache_entry.rts, cache_entry.wts + lease, in_msg.rts);
+				out_msg.wts := cache_entry.wts;
+				out_msg.rts := cache_entry.rts;
+			}
+		}
+	}
+
+    action(loadHit, "lH", desc="Load hit") {
+        assert(is_valid(cache_entry));
+        cacheMemory.setMRU(cache_entry);
+		lts := max(lts, cache_entry.wts);
+		DPRINTF(RubySlicc, "Load or Ifetch on 0x%x with data %s\n", address, cache_entry.DataBlk);
+        sequencer.readCallback(address, cache_entry.DataBlk, false);
+    }
+
+    action(externalLoadHit, "xLH", desc="External load hit (was a miss)") {
+		assert(is_valid(cache_entry));
+        peek(response_in, ResponseMsg) {
+            cacheMemory.setMRU(cache_entry);
+			lts := max(lts, cache_entry.wts);
+			DPRINTF(RubySlicc, "Load or Ifetch on 0x%x with data %s\n", address, cache_entry.DataBlk);
+            sequencer.readCallback(address, cache_entry.DataBlk, true,
+                                   machineIDToMachineType(in_msg.Sender));
+        }
+    }
+	
+	action(loadExHit, "lEH", desc="Load for EX state"){
+        assert(is_valid(cache_entry));
+		cacheMemory.setMRU(cache_entry);
+		lts := max(lts, cache_entry.wts);
+		cache_entry.rts := max(lts, cache_entry.rts);
+		DPRINTF(RubySlicc, "Load or Ifetch (store state) hit on 0x%x with data %s\n", address, cache_entry.DataBlk);
+		sequencer.readCallback(address, cache_entry.DataBlk, false);
+	}
+	
+	action(storeHit, "sH", desc="Store hit"){
+        assert(is_valid(cache_entry));
+        cacheMemory.setMRU(cache_entry);
+		sts := max(sts, cache_entry.rts + 1);
+		cache_entry.wts := sts;
+		cache_entry.rts := sts; // ref. Tardis 2.0, Fig 2.0, Step 1
+		DPRINTF(RubySlicc, "Store on 0x%x with data %s\n", address, cache_entry.DataBlk);
+        sequencer.writeCallback(address, cache_entry.DataBlk, false);
+	}
+	
+    action(externalStoreHit, "xSH", desc="External store hit (was a miss)") {
+        assert(is_valid(cache_entry));
+        peek(response_in, ResponseMsg) {
+            cacheMemory.setMRU(cache_entry);
+			sts := max(sts, cache_entry.rts + 1);
+			cache_entry.wts := sts;
+			cache_entry.rts := sts; // ref. Tardis 2.0, Fig 2.0, Step 1
+			DPRINTF(RubySlicc, "Store on 0x%x with data %s\n", address, cache_entry.DataBlk);
+            sequencer.writeCallback(address, cache_entry.DataBlk, true, machineIDToMachineType(in_msg.Sender));
+        }
+    }
+	
+    // Cache management actions
+    action(allocateCacheBlock, "aCB", desc="Allocate a cache block") {
+        assert(is_invalid(cache_entry));
+        assert(cacheMemory.cacheAvail(address));
+        set_cache_entry(cacheMemory.allocate(address, new Entry));
+    }
+
+    action(deallocateCacheBlock, "dCB", desc="Deallocate a cache block") {
+        assert(is_valid(cache_entry));
+        cacheMemory.deallocate(address);
+        unset_cache_entry();
+    }
+
+    action(allocateTBE, "aT", desc="Allocate TBE") {
+        assert(is_invalid(tbe));
+        TBEs.allocate(address);
+        set_tbe(TBEs[address]);
+    }
+
+    action(deallocateTBE, "dT", desc="Deallocate TBE") {
+        assert(is_valid(tbe));
+        TBEs.deallocate(address);
+        unset_tbe();
+    }
+
+    // Queue management actions
+    action(popMandatoryQueue, "pQ", desc="Pop the mandatory queue") {
+        mandatory_in.dequeue(clockEdge());
+    }
+
+    action(popResponseQueue, "pR", desc="Pop the response queue") {
+        response_in.dequeue(clockEdge());
+    }
+	
+    action(popForwardQueue, "pF", desc="Pop the forward queue") {
+        forward_in.dequeue(clockEdge());
+    }
+
+	action(p_profileMiss, "pi", desc="Profile cache miss") {
+		cacheMemory.profileDemandMiss();
+	}
+
+	action(p_profileHit, "ph", desc="Profile cache hit") {
+		cacheMemory.profileDemandHit();
+	}
+
+    // Stalling actions
+    action(stall, "z", desc="Stall the incoming request") {
+        // Do nothing.
+    }
+
+
+    /*************************************************************************/
+	///TARDIS TSO Transitions
+	
+	transition(I, Load, IS){
+		allocateCacheBlock;
+		allocateTBE;
+		sendSharedRequest;
+		p_profileMiss;
+		popMandatoryQueue;
+	}
+
+	transition(I, Store, IE){
+		allocateCacheBlock;
+		allocateTBE;
+		sendExclusiveRequest;
+		p_profileMiss;
+		popMandatoryQueue;
+	}
+
+	transition(IS, ShRep, S_LSD){
+		storeDatablock;
+		storeTimestamps;
+		deallocateTBE;
+		externalLoadHit;
+		popResponseQueue;
+
+	}
+	
+	transition(IE, ExRep, E){
+		storeDatablock;
+		storeTimestamps;
+		deallocateTBE;
+		externalStoreHit;
+		popResponseQueue;
+
+	}
+
+	transition(S_LSD, Load){
+		loadHit;
+		p_profileHit;
+		popMandatoryQueue;
+	}
+
+	transition(S_LSD, LoadLeaseExpired, S_EXP){
+		sendShReqNewLease;
+		popMandatoryQueue;
+	}
+	
+	transition(S_EXP, ShRep, S_LSD){
+		storeDatablock;
+		storeTimestamps;
+		externalLoadHit;
+		popResponseQueue;
+
+	}
+
+	transition(S_EXP, RenewRep, S_LSD){
+		updateLease;
+		externalLoadHit;
+		popResponseQueue;
+
+	}
+	
+	transition(S_LSD, Store, SE){
+		sendUpgradeReq;
+		popMandatoryQueue;
+	}	
+	
+	transition(SE, ExRep, E){
+		storeDatablock;
+		externalStoreHit;	
+		popResponseQueue;
+
+	}
+	
+	transition(SE, UpgRep, E){
+		updateLease;
+		externalStoreHit;
+		popResponseQueue;
+
+	}
+	
+	transition(E, {Load, LoadLeaseExpired}){
+		loadExHit;
+		p_profileHit;
+		popMandatoryQueue;
+	}
+
+	transition(E, Store){
+		storeHit;
+		p_profileHit;
+		popMandatoryQueue;
+	}
+
+	transition(E, FlushReq, S_LSD){
+		sendWritebackResponse;
+		popForwardQueue;
+
+	}
+
+	transition(E, Eviction, EI){
+		sendPutResponse;
+		//TODO: It could be added a popResponseQueue here to improve performance due to
+		//continuing blocking in this state. The pop is located into the next state (EI->I due).
+	}	
+
+	transition(EI, FlushReq, I){
+		deallocateCacheBlock;
+		popForwardQueue;
+
+	}
+
+	transition(EI, AckRep, I){
+		deallocateCacheBlock;
+		popResponseQueue;
+
+	}
+
+	transition(S_LSD, Eviction, I){
+		deallocateCacheBlock;
+	}
+
+	//Global stall
+	transition({IS, IE, S_EXP, SE, EI}, {Load, Store, Eviction}){
+		stall;
+	}
+
+	transition({IS, IE}, {FlushReq}){
+		stall;
+	}
+}
