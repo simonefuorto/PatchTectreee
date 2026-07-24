@@ -91,6 +91,10 @@ machine(MachineType:Directory, "Directory protocol")
         S_Fetch_Auth, AccessPermission:Busy, desc="Waiting for Counter from S";
         E_Fetch_Auth, AccessPermission:Busy, desc="Waiting for Counter from E";
 		Meta_Auth, AccessPermission:Busy, desc="Counter in fase di fetch dalla memoria";
+
+		//Stati per CounterChunk
+		C_V, AccessPermission:Read_Write, desc="Counter in Valid state (Clean)";
+		C_M, AccessPermission:Read_Write, desc="Counter in Modified state (Dirty)";
 	
 	}
 
@@ -1006,7 +1010,7 @@ machine(MachineType:Directory, "Directory protocol")
 	}
 
 	// Al ritorno del Counter_Data sulla DIRECTORY entry del COUNTER! (Stato sempre I)
-	transition(I, Counter_Data, I) {
+	transition(I, Counter_Data, C_V) {
 		allocateCounterLLC;
 		wakeUpAll;
 		deallocateCounterAuthTBE;
@@ -1171,5 +1175,20 @@ machine(MachineType:Directory, "Directory protocol")
     transition(I_Evicting, Memory_Ack, I) { popMemQueue; deallocateTBE; wakeUp; }
     transition(S_Evicting, Memory_Ack, S) { popMemQueue; deallocateTBE; wakeUp; }
     transition(E_Evicting, Memory_Ack, E) { popMemQueue; deallocateTBE; wakeUp; }
+  
+    //Evizioni di CounterChunk
+  	transition(C_V, LLC_Repl_Clean, I){
+		deallocateLLC;
+	}
+	transition(C_M, LLC_Repl_Dirty, I_Evicting){
+		allocateTBE_Eviction;
+		sendBlockToMem_Eviction;
+		deallocateLLC;
+	}
+
+	//I CounteChunk non possono essere richiesti dai core (non sanno della loro esistenza)
+	transition({C_V, C_M}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq, FlushRep}) {
+		z_stallAndWaitRequest;
+	}
 
 }
