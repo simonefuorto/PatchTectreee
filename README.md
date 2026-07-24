@@ -21,8 +21,10 @@ L'obiettivo primario è la valutazione dell'impatto prestazionale, la gestione a
 
 ### FASE 2: Writeback e Compressione (IN CORSO)
 - [ ] **STEP 4: Cascading Writebacks (Evictions)**
-  - [ ] Intercettazione degli eventi `LLC_Replacement` per i blocchi in stato `I` (es. transizione verso stati formali Counter Valid / Counter Dirty).
-  - [ ] Sviluppo della logica di Writeback asincrono verso la memoria principale per garantire la persistenza dei contatori aggiornati.
+  - [x] 4.1: Formalizzazione Stati Counter (`C_V` e `C_M`) per tracciare validità e sporcizia in LLC.
+  - [x] 4.2: Intercettazione eventi `LLC_Replacement` per i Counter e logica di sfratto verso la RAM.
+  - [ ] 4.3: Logica di sfratto Dati (inclusione Counter e Timestamp nei pacchetti di Writeback).
+  - [ ] 4.4: Write-Allocate dei Counter: su sfratto Dati, se il Counter manca (`I`), sospensione (es. `M_Evict_Auth`), fetch dalla RAM, allocazione MRU e successivo sblocco del Writeback.
 - [ ] **STEP 5: Estensione alla Ricorsione Multilivello (L1 -> L2 -> L3)**
   - [ ] Implementazione della struttura ad albero completa per incrementare il rapporto di compressione dei metadati in LLC, mitigando l'impatto dei Capacity Misses rilevati nello Step 2.
 
