@@ -1138,15 +1138,15 @@ machine(MachineType:Directory, "Directory protocol")
 		popResponseQueue;
 	}
 
-	transition({IS, IE}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq}) {
+	transition({IS, IE}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq, Auth_Miss}) {
 		stall;	//TODO: For IS case, to acquire better performance, it should not block simultaneous Shared Requests.
 	}
 
-	transition({ES, SE, EE}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq}) {
+	transition({ES, SE, EE}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq, Auth_Miss}) {
 		stall;
 	}
 
-    transition({I_Evicting, S_Evicting, E_Evicting}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq}) {
+    transition({I_Evicting, S_Evicting, E_Evicting}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq, Auth_Miss}) {
         stall;
     }
 
