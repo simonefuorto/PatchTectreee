@@ -95,6 +95,10 @@ machine(MachineType:Directory, "Directory protocol")
 		//Stati per CounterChunk
 		C_V, AccessPermission:Read_Write, desc="Counter in Valid state (Clean)";
 		C_M, AccessPermission:Read_Write, desc="Counter in Modified state (Dirty)";
+		//Transient states per scrittura sicura
+		I_Evict_Auth, AccessPermission:Busy, desc="sfratto congelato da I";
+		S_Evict_Auth, AccessPermission:Busy, desc="sfratto congelato da S";
+		E_Evict_Auth, AccessPermission:Busy, desc="sfratto congelato da E";
 	
 	}
 
@@ -115,7 +119,8 @@ machine(MachineType:Directory, "Directory protocol")
         // LLC Eviction
         LLC_Repl_Clean, desc="LLC replacement for a clean block (silent eviction)";
         LLC_Repl_Dirty, desc="LLC replacement for a dirty block (requires writeback)";
-		
+		//Eviction with missing counter
+		LLC_Repl_Dirty_Auth_Miss, desc="Sfratto sporrco  con counter assente";
 		//Events per l'autenticazione dei dati
 		Auth_Miss,       desc="Il counter L1 del blocco non e' in LLC, e deve essere prelevato";
     }
@@ -162,6 +167,24 @@ machine(MachineType:Directory, "Directory protocol")
 		Addr OriginalAddress,  desc="Indirizzo del datachunk da autenticare e in stallo";
 		MachineID Requestor,   desc="Chi ha richiesto il dato";
 		Addr parentAddress,    desc="Indirizzo del blocco padre da cui deriva il datachunk";
+		
+		// 16 Slot Hardware per gestire i Multi-Sfratti concorrenti (Arity massima)
+		Addr Waiter0, default="intToAddress(0)";
+		Addr Waiter1, default="intToAddress(0)";
+		Addr Waiter2, default="intToAddress(0)";
+		Addr Waiter3, default="intToAddress(0)";
+		Addr Waiter4, default="intToAddress(0)";
+		Addr Waiter5, default="intToAddress(0)";
+		Addr Waiter6, default="intToAddress(0)";
+		Addr Waiter7, default="intToAddress(0)";
+		Addr Waiter8, default="intToAddress(0)";
+		Addr Waiter9, default="intToAddress(0)";
+		Addr Waiter10, default="intToAddress(0)";
+		Addr Waiter11, default="intToAddress(0)";
+		Addr Waiter12, default="intToAddress(0)";
+		Addr Waiter13, default="intToAddress(0)";
+		Addr Waiter14, default="intToAddress(0)";
+		Addr Waiter15, default="intToAddress(0)";
 	}
 	structure(AuthTBETable, external="yes") {
 		AuthTBE lookup_ref(Addr);
@@ -316,7 +339,18 @@ machine(MachineType:Directory, "Directory protocol")
                         Addr victim := LLC.cacheProbe(in_msg.addr);
                         LLC_Entry victim_entry := getLLCEntry(victim);
                         if (victim_entry.Dirty) {
-                            trigger(Event:LLC_Repl_Dirty, victim, victim_entry, TBEs[victim]);
+                            if (!isMetadataAddr(victim)) {
+                                Addr parent_L1 := getParentAddr(victim);
+                                DPRINTF(Tectree, "[Eviction Datachunk] La vittima 0x%x E' UN DATO. Il suo Counter L1 e' 0x%x. isTagPresent: %d\n", victim, parent_L1, LLC.isTagPresent(parent_L1));
+                                if (parent_L1 != intToAddress(0) && LLC.isTagPresent(parent_L1) == false) {
+                                    trigger(Event:LLC_Repl_Dirty_Auth_Miss, victim, victim_entry, TBEs[victim]);
+                                } else {
+                                    trigger(Event:LLC_Repl_Dirty, victim, victim_entry, TBEs[victim]);
+                                }
+                            } else {
+                                DPRINTF(Tectree, "[Eviction Counter] La vittima 0x%x E' UN COUNTER (Stato %s). Sfratto diretto (LLC_Repl_Dirty) senza cercare il genitore!\n", victim, victim_entry.CacheState);
+                                trigger(Event:LLC_Repl_Dirty, victim, victim_entry, TBEs[victim]);
+                            }
                         } else {
                             trigger(Event:LLC_Repl_Clean, victim, victim_entry, TBEs[victim]);
                         }
@@ -351,7 +385,12 @@ machine(MachineType:Directory, "Directory protocol")
                     Addr victim := LLC.cacheProbe(in_msg.addr);
                     LLC_Entry victim_entry := getLLCEntry(victim);
                     if (victim_entry.Dirty) {
-                        trigger(Event:LLC_Repl_Dirty, victim, victim_entry, TBEs[victim]);
+                        Addr parent_L1 := getParentAddr(victim);
+                        if (parent_L1 != intToAddress(0) && LLC.isTagPresent(parent_L1) == false) {
+                            trigger(Event:LLC_Repl_Dirty_Auth_Miss, victim, victim_entry, TBEs[victim]);
+                        } else {
+                            trigger(Event:LLC_Repl_Dirty, victim, victim_entry, TBEs[victim]);
+                        }
                     } else {
                         trigger(Event:LLC_Repl_Clean, victim, victim_entry, TBEs[victim]);
                     }
@@ -867,6 +906,412 @@ machine(MachineType:Directory, "Directory protocol")
 		}
 	}
 
+	action(fetchCounterForEviction, "fCE", desc="Fetch counter during eviction") {
+		Addr counter_addr := getParentAddr(address);
+		if (AuthTBEs.isPresent(counter_addr) == false) {
+			AuthTBEs.allocate(counter_addr);
+			enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+				out_msg.addr := counter_addr;
+				out_msg.Type := MemoryRequestType:MEMORY_READ;
+				out_msg.Sender := machineID;
+				out_msg.MessageSize := MessageSizeType:Request_Control;
+				out_msg.Len := 0;
+			}
+			DPRINTF(Tectree, "[4.4 Write-Allocate] Sfratto in sospeso. Fetch per il Counter 0x%x\\n", counter_addr);
+		}
+		
+		// Inseriamo l'indirizzo del Dato (address) nel primo slot libero del Counter
+		if (AuthTBEs.lookup_ref(counter_addr).Waiter0 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter0 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter1 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter1 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter2 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter2 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter3 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter3 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter4 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter4 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter5 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter5 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter6 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter6 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter7 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter7 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter8 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter8 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter9 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter9 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter10 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter10 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter11 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter11 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter12 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter12 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter13 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter13 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter14 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter14 := address; }
+		else if (AuthTBEs.lookup_ref(counter_addr).Waiter15 == intToAddress(0)) { AuthTBEs.lookup_ref(counter_addr).Waiter15 := address; }
+	}
+
+    action(resumeEvictions, "rE", desc="Risveglia i Dati sospesi") {
+        if (AuthTBEs.isPresent(address)) {
+            if (AuthTBEs.lookup_ref(address).Waiter0 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter0;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter1 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter1;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter2 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter2;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter3 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter3;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter4 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter4;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter5 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter5;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter6 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter6;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter7 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter7;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter8 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter8;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter9 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter9;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter10 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter10;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter11 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter11;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter12 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter12;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter13 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter13;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter14 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter14;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+            if (AuthTBEs.lookup_ref(address).Waiter15 != intToAddress(0)) {
+                Addr data_addr := AuthTBEs.lookup_ref(address).Waiter15;
+                Entry data_dir_entry := getDirectoryEntry(data_addr);
+                getLLCEntry(address).Dirty := true;
+                getDirectoryEntry(address).DirState := State:C_M;
+                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                    out_msg.addr := data_addr;
+                    out_msg.Type := MemoryRequestType:MEMORY_WB;
+                    out_msg.Sender := machineID;
+                    out_msg.MessageSize := MessageSizeType:Writeback_Data;
+                    out_msg.DataBlk := TBEs[data_addr].DataBlk;
+                }
+                if (data_dir_entry.DirState == State:I_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:I_Evicting;
+                    TBEs[data_addr].TBEState := State:I_Evicting;
+                } else if (data_dir_entry.DirState == State:S_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:S_Evicting;
+                    TBEs[data_addr].TBEState := State:S_Evicting;
+                } else if (data_dir_entry.DirState == State:E_Evict_Auth) {
+                    getDirectoryEntry(data_addr).DirState := State:E_Evicting;
+                    TBEs[data_addr].TBEState := State:E_Evicting;
+                }
+            }
+        }
+    }
+
 	action(deallocateCounterAuthTBE, "dCA", desc="Deallocate AuthTBE for the counter") {
 		if (AuthTBEs.isPresent(address)) {
 			AuthTBEs.deallocate(address);
@@ -904,6 +1349,21 @@ machine(MachineType:Directory, "Directory protocol")
         }
 	}
 	
+	action(incrementCounter,"inc", desc="Incrementa il Counter padre se presente in LLC"){
+		Addr parent_addr := getParentAddr(address);
+		if(parent_addr != intToAddress(0)){
+			if(LLC.isTagPresent(parent_addr)){
+				LLC_Entry counter_entry := getLLCEntry(parent_addr);
+				Entry parent_dir_entry := getDirectoryEntry(parent_addr);
+                
+                // Aggiornamento fisico del blocco rendendolo sporco (C_M)
+                counter_entry.Dirty := true;
+                parent_dir_entry.DirState := State:C_M;
+                LLC.setMRU(parent_addr);
+                DPRINTF(Tectree, "[Counter-Hit] Counter 0x%x incrementato a C_M per lo sfratto del Dato 0x%x\n", parent_addr, address);
+			}
+		}
+	}
 	
 	//--------------------------------------------------------------------------------
     
@@ -1012,6 +1472,7 @@ machine(MachineType:Directory, "Directory protocol")
 	// Al ritorno del Counter_Data sulla DIRECTORY entry del COUNTER! (Stato sempre I)
 	transition(I, Counter_Data, C_V) {
 		allocateCounterLLC;
+        resumeEvictions;
 		wakeUpAll;
 		deallocateCounterAuthTBE;
 		popMemQueue;
@@ -1156,15 +1617,43 @@ machine(MachineType:Directory, "Directory protocol")
 
     // --- LLC Eviction Transitions ---
 
+    // Step 4.4: Sfratto sporco ma Counter assente (Non-Blocking!)
+    // 1. Alloco TBE per parcheggiare il dato
+    // 2. Chiedo il Counter e mi metto in slot (fetchCounterForEviction)
+    // 3. DEALLOCO SUBITO la cache per sbloccare la coda e non causare deadlock!
+    transition(I, LLC_Repl_Dirty_Auth_Miss, I_Evict_Auth) { allocateTBE_Eviction; fetchCounterForEviction; deallocateLLC; }
+    transition(S, LLC_Repl_Dirty_Auth_Miss, S_Evict_Auth) { allocateTBE_Eviction; fetchCounterForEviction; deallocateLLC; }
+    transition(E, LLC_Repl_Dirty_Auth_Miss, E_Evict_Auth) { allocateTBE_Eviction; fetchCounterForEviction; deallocateLLC; }
+    
+    // Le transizioni per LLC_Repl_Dirty su *_Evict_Auth sono rimosse, se ne occupa resumeEvictions
+
+    transition({I_Evict_Auth, S_Evict_Auth, E_Evict_Auth}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq, Auth_Miss}) { stall; }
+    transition({I_Evict_Auth, S_Evict_Auth, E_Evict_Auth}, LLC_Repl_Clean) { stall; }
+
     // Clean eviction: Just drop the block silently
     transition(I, LLC_Repl_Clean, I) { deallocateLLC; }
     transition(S, LLC_Repl_Clean, S) { deallocateLLC; }
     transition(E, LLC_Repl_Clean, E) { deallocateLLC; }
 
     // Dirty eviction: Must write back to Memory
-    transition(I, LLC_Repl_Dirty, I_Evicting) { allocateTBE_Eviction; sendBlockToMem_Eviction; deallocateLLC; }
-    transition(S, LLC_Repl_Dirty, S_Evicting) { allocateTBE_Eviction; sendBlockToMem_Eviction; deallocateLLC; }
-    transition(E, LLC_Repl_Dirty, E_Evicting) { allocateTBE_Eviction; sendBlockToMem_Eviction; deallocateLLC; }
+    transition(I, LLC_Repl_Dirty, I_Evicting) { 
+		incrementCounter;
+		allocateTBE_Eviction; 
+		sendBlockToMem_Eviction; 
+		deallocateLLC; 
+		}
+    transition(S, LLC_Repl_Dirty, S_Evicting) {
+		incrementCounter;
+		allocateTBE_Eviction; 
+		sendBlockToMem_Eviction; 
+		deallocateLLC; 
+		}
+    transition(E, LLC_Repl_Dirty, E_Evicting) { 
+		incrementCounter;
+		allocateTBE_Eviction; 
+		sendBlockToMem_Eviction; 
+		deallocateLLC; 
+		}
 
     // If the victim is currently in a transient state, stall the eviction
     transition({IS, IE, SE, EE, I_Fetch_Auth, S_Fetch_Auth, E_Fetch_Auth, I_Evicting, S_Evicting, E_Evicting }, {LLC_Repl_Clean, LLC_Repl_Dirty}) {
