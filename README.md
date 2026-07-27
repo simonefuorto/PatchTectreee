@@ -25,11 +25,10 @@ L'obiettivo primario è la valutazione dell'impatto prestazionale, la gestione a
   - [x] 4.2: Intercettazione eventi `LLC_Replacement` per i Counter e logica di sfratto verso la RAM.
   - [x] 4.3: Sfratto di Dati in LLC con Counter-Hit.
   - [x] 4.4: Write-Allocate dei Counter: su sfratto Dati, se il Counter manca (`I`), sospensione (es. `M_Evict_Auth`), fetch dalla RAM, allocazione MRU e successivo sblocco del Writeback.
-- [ ] **STEP 5: Estensione alla Ricorsione Multilivello (L1 -> L2 -> L3)**
-  - [ ] 5.1: Estensione Multilivello - Letture
-  - [ ] 5.2: Estensione Multilivello - Scrittura
-  - [ ] 5.3: Estensione Multilivello - Eviction
-  - [ ] Implementazione della struttura ad albero completa per incrementare il rapporto di compressione dei metadati in LLC, mitigando l'impatto dei Capacity Misses rilevati nello Step 2.
+- [ ] **STEP 5: Estensione alla Ricorsione Multilivello (L1->L2->L3)**
+  - [ ] 5.1: Estensione multilivello letture
+  - [ ] 5.2: Estensione multilivello scrittura
+  - [ ] 5.3: Estensione multilivello eviction
 
 ### FASE 3: Verifica e Convalida Finale (PIANIFICATA)
 - [ ] **STEP 6: Analisi Statistica Finale**
