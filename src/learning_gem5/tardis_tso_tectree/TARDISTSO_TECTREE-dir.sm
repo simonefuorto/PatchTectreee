@@ -385,10 +385,16 @@ machine(MachineType:Directory, "Directory protocol")
                     Addr victim := LLC.cacheProbe(in_msg.addr);
                     LLC_Entry victim_entry := getLLCEntry(victim);
                     if (victim_entry.Dirty) {
-                        Addr parent_L1 := getParentAddr(victim);
-                        if (parent_L1 != intToAddress(0) && LLC.isTagPresent(parent_L1) == false) {
-                            trigger(Event:LLC_Repl_Dirty_Auth_Miss, victim, victim_entry, TBEs[victim]);
+                        if (!isMetadataAddr(victim)) {
+                            Addr parent_L1 := getParentAddr(victim);
+                            DPRINTF(Tectree, "[Eviction Datachunk] (Response) La vittima 0x%x E' UN DATO. Il suo Counter L1 e' 0x%x. isTagPresent: %d\n", victim, parent_L1, LLC.isTagPresent(parent_L1));
+                            if (parent_L1 != intToAddress(0) && LLC.isTagPresent(parent_L1) == false) {
+                                trigger(Event:LLC_Repl_Dirty_Auth_Miss, victim, victim_entry, TBEs[victim]);
+                            } else {
+                                trigger(Event:LLC_Repl_Dirty, victim, victim_entry, TBEs[victim]);
+                            }
                         } else {
+                            DPRINTF(Tectree, "[Eviction Counter] (Response) La vittima 0x%x E' UN COUNTER (Stato %s). Sfratto diretto (LLC_Repl_Dirty) senza cercare il genitore!\n", victim, victim_entry.CacheState);
                             trigger(Event:LLC_Repl_Dirty, victim, victim_entry, TBEs[victim]);
                         }
                     } else {
@@ -860,6 +866,7 @@ machine(MachineType:Directory, "Directory protocol")
             LLC_Entry counter_entry := getLLCEntry(in_msg.addr);
             counter_entry.DataBlk := in_msg.DataBlk;
             counter_entry.Dirty := false;
+            getDirectoryEntry(in_msg.addr).DirState := State:C_V;
 			LLC.setMRU(in_msg.addr);
         }
     }
@@ -1470,7 +1477,7 @@ machine(MachineType:Directory, "Directory protocol")
 	}
 
 	// Al ritorno del Counter_Data sulla DIRECTORY entry del COUNTER! (Stato sempre I)
-	transition(I, Counter_Data, C_V) {
+	transition(I, Counter_Data) {
 		allocateCounterLLC;
         resumeEvictions;
 		wakeUpAll;
