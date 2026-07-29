@@ -26,7 +26,7 @@ L'obiettivo primario è la valutazione dell'impatto prestazionale, la gestione a
   - [x] 4.3: Sfratto di Dati in LLC con Counter-Hit.
   - [x] 4.4: Write-Allocate dei Counter: su sfratto Dati, se il Counter manca (`I`), sospensione (es. `M_Evict_Auth`), fetch dalla RAM, allocazione MRU e successivo sblocco del Writeback.
 - [ ] **STEP 5: Estensione alla Ricorsione Multilivello (L1->L2->L3)**
-  - [ ] 5.1: Estensione multilivello letture
+  - [x] 5.1: Estensione multilivello letture
   - [ ] 5.2: Estensione multilivello scrittura
   - [ ] 5.3: Estensione multilivello eviction
 

@@ -99,6 +99,7 @@ machine(MachineType:Directory, "Directory protocol")
 		I_Evict_Auth, AccessPermission:Busy, desc="sfratto congelato da I";
 		S_Evict_Auth, AccessPermission:Busy, desc="sfratto congelato da S";
 		E_Evict_Auth, AccessPermission:Busy, desc="sfratto congelato da E";
+		E_Evict_Flush, AccessPermission:Busy, desc="sfratto di E in attesa di FlushRep";
 	
 	}
 
@@ -123,6 +124,8 @@ machine(MachineType:Directory, "Directory protocol")
 		LLC_Repl_Dirty_Auth_Miss, desc="Sfratto sporrco  con counter assente";
 		//Events per l'autenticazione dei dati
 		Auth_Miss,       desc="Il counter L1 del blocco non e' in LLC, e deve essere prelevato";
+		LLC_Repl_Dirty_Auth_Hit_From_Flush, desc="Trigger interno dopo FlushRep (Hit)";
+		LLC_Repl_Dirty_Auth_Miss_From_Flush, desc="Trigger interno dopo FlushRep (Miss)";
     }
 
     // NOTE: We use a netdest for the sharers and the owner so we can simply
@@ -381,7 +384,7 @@ machine(MachineType:Directory, "Directory protocol")
 				LLC_Entry cache_entry := getLLCEntry(in_msg.addr);
 
 				mts := max(mts, in_msg.rts);
-                if (is_invalid(cache_entry) && LLC.cacheAvail(in_msg.addr) == false) {
+                if (dir_entry.DirState != State:E_Evict_Flush && is_invalid(cache_entry) && LLC.cacheAvail(in_msg.addr) == false) {
                     Addr victim := LLC.cacheProbe(in_msg.addr);
                     LLC_Entry victim_entry := getLLCEntry(victim);
                     if (victim_entry.Dirty) {
@@ -401,12 +404,17 @@ machine(MachineType:Directory, "Directory protocol")
                         trigger(Event:LLC_Repl_Clean, victim, victim_entry, TBEs[victim]);
                     }
                 } else {
-				    if (in_msg.Type == CoherenceResponseType:FLUSH_REP) {
-                        trigger(Event:FlushRep, in_msg.addr, cache_entry, tbe);
-				    } else if(in_msg.Type == CoherenceResponseType:WB_REP) {
-					    trigger(Event:FlushRep, in_msg.addr, cache_entry, tbe);
-				    } else if(in_msg.Type == CoherenceResponseType:PUT_REP) {
-					    trigger(Event:FlushRep, in_msg.addr, cache_entry, tbe);
+				    if (in_msg.Type == CoherenceResponseType:FLUSH_REP || in_msg.Type == CoherenceResponseType:WB_REP || in_msg.Type == CoherenceResponseType:PUT_REP) {
+                        if (dir_entry.DirState == State:E_Evict_Flush) {
+                            Addr counter_addr := getParentAddr(in_msg.addr);
+                            if (LLC.isTagPresent(counter_addr)) {
+                                trigger(Event:LLC_Repl_Dirty_Auth_Hit_From_Flush, in_msg.addr, cache_entry, tbe);
+                            } else {
+                                trigger(Event:LLC_Repl_Dirty_Auth_Miss_From_Flush, in_msg.addr, cache_entry, tbe);
+                            }
+                        } else {
+                            trigger(Event:FlushRep, in_msg.addr, cache_entry, tbe);
+                        }
 				    } else {
                         error("Unexpected message type.");
                     }
@@ -630,17 +638,15 @@ machine(MachineType:Directory, "Directory protocol")
 	}
 	
 	action(sendFlushReq, "sFR", desc="Send a FLUSH_REQ to the owner due to an Exclusive request of another Cache"){
-		peek(request_in, RequestMsg){
-			Entry dir_entry := getDirectoryEntry(address);
-			DPRINTF(RubySlicc, "Send flush request to %s with address 0x%x [%s]\n", dir_entry.Owner, address);
-			enqueue(forward_out, RequestMsg, directory_latency){
-				out_msg.addr := address;
-				out_msg.Type := CoherenceRequestType:FLUSH_REQ;
-				out_msg.Requestor := machineID;
-				out_msg.Destination.clear();
-				out_msg.Destination := dir_entry.Owner;
-				out_msg.MessageSize := MessageSizeType:Control;
-			}
+		Entry dir_entry := getDirectoryEntry(address);
+		DPRINTF(RubySlicc, "Send flush request to %s with address 0x%x [%s]\n", dir_entry.Owner, address);
+		enqueue(forward_out, RequestMsg, directory_latency){
+			out_msg.addr := address;
+			out_msg.Type := CoherenceRequestType:FLUSH_REQ;
+			out_msg.Requestor := machineID;
+			out_msg.Destination.clear();
+			out_msg.Destination := dir_entry.Owner;
+			out_msg.MessageSize := MessageSizeType:Control;
 		}
 	}
 
@@ -664,7 +670,7 @@ machine(MachineType:Directory, "Directory protocol")
             out_msg.Type := MemoryRequestType:MEMORY_WB;
             out_msg.Sender := machineID;
             out_msg.MessageSize := MessageSizeType:Writeback_Data;
-            out_msg.DataBlk := cache_entry.DataBlk;
+            out_msg.DataBlk := tbe.DataBlk;
         }
     }
 
@@ -792,6 +798,12 @@ machine(MachineType:Directory, "Directory protocol")
         TBEs.allocate(address);
         set_tbe(TBEs[address]);
         tbe.PhysicalAddress := address;
+        if (is_valid(cache_entry)) {
+            tbe.DataBlk := cache_entry.DataBlk;
+        }
+        Entry dir_entry := getDirectoryEntry(address);
+        tbe.wts := dir_entry.wts;
+        tbe.rts := dir_entry.rts;
         DPRINTF(RubySlicc, "Allocated TBE for Eviction [Address: 0x%x]\n", tbe.PhysicalAddress);
     }
 
@@ -878,16 +890,35 @@ machine(MachineType:Directory, "Directory protocol")
         }
     }
 
+
+
     action(setMRU, "mru", desc="Set MRU") {
         if (is_valid(cache_entry)) {
             LLC.setMRU(address);
-            Addr parent_L1 := getParentAddr(address);
-            if(parent_L1 != intToAddress(0)){
-                if(LLC.isTagPresent(parent_L1)){
-                    LLC.setMRU(parent_L1);
-                    DPRINTF(Tectree, "[LLC]: Set MRU for parent L1 block 0x%x of block 0x%x.\n", parent_L1, address);
-                }else{
-                    DPRINTF(Tectree, "[LLC]: Parent L1 block 0x%x of block 0x%x not present in LLC.\n", parent_L1, address);
+            
+            // SLICC non supporta il "while", quindi srotoliamo il ciclo (max 6 livelli)
+            Addr p1 := getParentAddr(address);
+            if (p1 != intToAddress(0) && LLC.isTagPresent(p1)) {
+                LLC.setMRU(p1);
+                Addr p2 := getParentAddr(p1);
+                if (p2 != intToAddress(0) && LLC.isTagPresent(p2)) {
+                    LLC.setMRU(p2);
+                    Addr p3 := getParentAddr(p2);
+                    if (p3 != intToAddress(0) && LLC.isTagPresent(p3)) {
+                        LLC.setMRU(p3);
+                        Addr p4 := getParentAddr(p3);
+                        if (p4 != intToAddress(0) && LLC.isTagPresent(p4)) {
+                            LLC.setMRU(p4);
+                            Addr p5 := getParentAddr(p4);
+                            if (p5 != intToAddress(0) && LLC.isTagPresent(p5)) {
+                                LLC.setMRU(p5);
+                                Addr p6 := getParentAddr(p5);
+                                if (p6 != intToAddress(0) && LLC.isTagPresent(p6)) {
+                                    LLC.setMRU(p6);
+                                }
+                            }
+                        }
+                    }
                 }
             } 
         }
@@ -1329,29 +1360,38 @@ machine(MachineType:Directory, "Directory protocol")
 		request_in.recycle(clockEdge(), cyclesToTicks(to_memory_controller_latency));
 	}
 
+	//-------------------------------------------------------------------------------
+	//Funzione per implementare la ricorsione
 	action(checkRecursionAndWakeUp, "cRW", desc="Check if parent counter is missing") {
         peek(memQueue_in, MemoryMsg) {
             Addr parent_addr := getParentAddr(address);
             
-			// DISABILITATO TEMPORANEAMENTE PER IL TEST DEL SINGOLO LIVELLO (Dato -> L1)
-            // bool parent_missing := (parent_addr != intToAddress(0)) && (LLC.isTagPresent(parent_addr) == false);
-			bool parent_missing := false;
+            // 1. ATTIVIAMO LA RICORSIONE: il padre manca se l'indirizzo non è 0 (Root) e non è in LLC
+            bool parent_missing := (parent_addr != intToAddress(0)) && (LLC.isTagPresent(parent_addr) == false);
 
             if (parent_missing) {
-                enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
-                    out_msg.addr := parent_addr;
-                    out_msg.Type := MemoryRequestType:MEMORY_READ;
-                    out_msg.Sender := machineID;
-                    out_msg.OriginalRequestorMachId := AuthTBEs.lookup_ref(in_msg.OriginalRequestorAddr).Requestor;
-                    out_msg.OriginalRequestorAddr := in_msg.OriginalRequestorAddr;
-                    out_msg.MessageSize := MessageSizeType:Request_Control;
-                    out_msg.Len := 0;
+                // 2. PROTEZIONE MSHR: Allochiamo l'AuthTBE per il PADRE (se non esiste già) per evitare fetch doppi!
+                if (AuthTBEs.isPresent(parent_addr) == false) {
+                    AuthTBEs.allocate(parent_addr);
+                    
+                    enqueue(memQueue_out, MemoryMsg, to_memory_controller_latency) {
+                        out_msg.addr := parent_addr;
+                        out_msg.Type := MemoryRequestType:MEMORY_READ;
+                        out_msg.Sender := machineID;
+                        out_msg.MessageSize := MessageSizeType:Request_Control;
+                        out_msg.Len := 0;
+                    }
+                    DPRINTF(Tectree, "[RECURSION] Counter 0x%x arrivato, ma padre 0x%x assente! Fetch del padre avviato.\n", address, parent_addr);
+                } else {
+                    DPRINTF(Tectree, "[RECURSION] Counter 0x%x arrivato, padre 0x%x assente ma FETCH GIA' IN CORSO da un altro blocco.\n", address, parent_addr);
                 }
-                DPRINTF(Tectree, "[MULTILEVEL RECURSION] Counter 0x%x arrived, ma il suo padre 0x%x manca in LLC! Invio richiesta per il padre...\\n", address, parent_addr);
+                
+                
+                
             } else {
+                // 3. FINE RICORSIONE: Abbiamo raggiunto la Root (0) oppure il padre era già caldissimo in LLC!
                 wakeUpAllBuffers();
-                DPRINTF(Tectree, "[WAKE-UP] Counter 0x%x arrived. Percorso verso la Root completato! Risveglio il Dato originale: 0x%x\n", address, AuthTBEs.lookup_ref(in_msg.OriginalRequestorAddr).OriginalAddress);
-                AuthTBEs.deallocate(in_msg.OriginalRequestorAddr);
+                DPRINTF(Tectree, "[WAKE-UP] Counter 0x%x arrivato. Percorso verso la Root completato! Risveglio il Dato originale\n", address);
             }
         }
 	}
@@ -1480,7 +1520,7 @@ machine(MachineType:Directory, "Directory protocol")
 	transition(I, Counter_Data) {
 		allocateCounterLLC;
         resumeEvictions;
-		wakeUpAll;
+		checkRecursionAndWakeUp;
 		deallocateCounterAuthTBE;
 		popMemQueue;
 	}
@@ -1630,11 +1670,15 @@ machine(MachineType:Directory, "Directory protocol")
     // 3. DEALLOCO SUBITO la cache per sbloccare la coda e non causare deadlock!
     transition(I, LLC_Repl_Dirty_Auth_Miss, I_Evict_Auth) { allocateTBE_Eviction; fetchCounterForEviction; deallocateLLC; }
     transition(S, LLC_Repl_Dirty_Auth_Miss, S_Evict_Auth) { allocateTBE_Eviction; fetchCounterForEviction; deallocateLLC; }
-    transition(E, LLC_Repl_Dirty_Auth_Miss, E_Evict_Auth) { allocateTBE_Eviction; fetchCounterForEviction; deallocateLLC; }
+    transition(E, {LLC_Repl_Dirty, LLC_Repl_Dirty_Auth_Miss}, E_Evict_Flush) { 
+        allocateTBE_Eviction; 
+        sendFlushReq; 
+        deallocateLLC;
+    }
     
     // Le transizioni per LLC_Repl_Dirty su *_Evict_Auth sono rimosse, se ne occupa resumeEvictions
 
-    transition({I_Evict_Auth, S_Evict_Auth, E_Evict_Auth}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq, Auth_Miss}) { stall; }
+    transition({I_Evict_Auth, S_Evict_Auth, E_Evict_Auth, E_Evict_Flush}, {ShReq, ShReq_Hit, ExReq, ExReq_Hit, UpgReq, Auth_Miss}) { stall; }
     transition({I_Evict_Auth, S_Evict_Auth, E_Evict_Auth}, LLC_Repl_Clean) { stall; }
 
     // Clean eviction: Just drop the block silently
@@ -1655,15 +1699,25 @@ machine(MachineType:Directory, "Directory protocol")
 		sendBlockToMem_Eviction; 
 		deallocateLLC; 
 		}
-    transition(E, LLC_Repl_Dirty, E_Evicting) { 
-		incrementCounter;
-		allocateTBE_Eviction; 
-		sendBlockToMem_Eviction; 
-		deallocateLLC; 
-		}
+    transition(E_Evict_Flush, LLC_Repl_Dirty_Auth_Hit_From_Flush, I_Evicting) {
+        clearOwner;
+        storeDataBlockTBE;
+        incrementCounter;
+        sendBlockToMem_Eviction;
+        deallocateLLC;
+        popResponseQueue;
+    }
+    
+    transition(E_Evict_Flush, LLC_Repl_Dirty_Auth_Miss_From_Flush, I_Evict_Auth) {
+        clearOwner;
+        storeDataBlockTBE;
+        fetchCounterForEviction;
+        deallocateLLC;
+        popResponseQueue;
+    }
 
     // If the victim is currently in a transient state, stall the eviction
-    transition({IS, IE, SE, EE, I_Fetch_Auth, S_Fetch_Auth, E_Fetch_Auth, I_Evicting, S_Evicting, E_Evicting }, {LLC_Repl_Clean, LLC_Repl_Dirty}) {
+    transition({IS, IE, SE, EE, I_Fetch_Auth, S_Fetch_Auth, E_Fetch_Auth, I_Evicting, S_Evicting, E_Evicting, E_Evict_Flush }, {LLC_Repl_Clean, LLC_Repl_Dirty}) {
         stall;
     }
 
