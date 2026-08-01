@@ -34,6 +34,8 @@ machine(MachineType:Directory, "Directory protocol")
       // created in getDirEntry()
       DirectoryMemory * directory;
       CacheMemory * LLC;
+
+	  int mru_policy, default="0";
 	  
 	  int mts := 1;
 	  int lease;   //Lease to add to the timestamp of a requested block
@@ -469,27 +471,39 @@ machine(MachineType:Directory, "Directory protocol")
 						} else {
 							if (parent_L1 != intToAddress(0)) {
 								DPRINTF(Tectree, "[Auth Hit] Dato 0x%x procede (SH_REQ). Il Counter L1 0x%x e' in LLC.\n", in_msg.addr, parent_L1);
-								LLC.setMRU(parent_L1);
+								if (mru_policy == 0) {
+	LLC.setMRU(parent_L1);
+	}
 								Addr parent_L2 := getParentAddr(parent_L1);
 								if (parent_L2 != intToAddress(0) && LLC.isTagPresent(parent_L2)) {
-									LLC.setMRU(parent_L2);
+									if (mru_policy == 0) {
+	LLC.setMRU(parent_L2);
 									DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L2 0x%x\n", parent_L2);
+	}
 									Addr parent_L3 := getParentAddr(parent_L2);
 									if (parent_L3 != intToAddress(0) && LLC.isTagPresent(parent_L3)) {
-										LLC.setMRU(parent_L3);
+										if (mru_policy == 0) {
+	LLC.setMRU(parent_L3);
 										DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L3 0x%x\n", parent_L3);
+	}
 										Addr parent_L4 := getParentAddr(parent_L3);
 										if (parent_L4 != intToAddress(0) && LLC.isTagPresent(parent_L4)) {
-											LLC.setMRU(parent_L4);
+											if (mru_policy == 0) {
+	LLC.setMRU(parent_L4);
 											DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L4 0x%x\n", parent_L4);
+	}
 											Addr parent_L5 := getParentAddr(parent_L4);
 											if (parent_L5 != intToAddress(0) && LLC.isTagPresent(parent_L5)) {
-												LLC.setMRU(parent_L5);
+												if (mru_policy == 0) {
+	LLC.setMRU(parent_L5);
 												DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L5 0x%x\n", parent_L5);
+	}
 												Addr parent_L6 := getParentAddr(parent_L5);
 												if (parent_L6 != intToAddress(0) && LLC.isTagPresent(parent_L6)) {
-													LLC.setMRU(parent_L6);
-													DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L6 (Root) 0x%x\n", parent_L6);
+													if (mru_policy == 0) {
+	LLC.setMRU(parent_L6);
+													DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L6  0x%x\n", parent_L6);
+	}
 												}
 											}
 										}
@@ -516,27 +530,41 @@ machine(MachineType:Directory, "Directory protocol")
 							} else {
 								if (parent_L1 != intToAddress(0)) {
 									DPRINTF(Tectree, "[Auth Hit] Dato 0x%x procede (EX_REQ). Il Counter L1 0x%x e' in LLC.\n", in_msg.addr, parent_L1);
-									LLC.setMRU(parent_L1);
+									if (mru_policy == 0) {
+	LLC.setMRU(parent_L1);
+	}
 									Addr parent_L2 := getParentAddr(parent_L1);
 									if (parent_L2 != intToAddress(0) && LLC.isTagPresent(parent_L2)) {
-										LLC.setMRU(parent_L2);
+										if (mru_policy == 0) {
+	LLC.setMRU(parent_L2);
 										DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L2 0x%x\n", parent_L2);
+	}
 										Addr parent_L3 := getParentAddr(parent_L2);
 										if (parent_L3 != intToAddress(0) && LLC.isTagPresent(parent_L3)) {
-											LLC.setMRU(parent_L3);
+											if (mru_policy == 0) {
+	LLC.setMRU(parent_L3);
 											DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L3 0x%x\n", parent_L3);
+	}
 											Addr parent_L4 := getParentAddr(parent_L3);
 											if (parent_L4 != intToAddress(0) && LLC.isTagPresent(parent_L4)) {
-												LLC.setMRU(parent_L4);
+												if (mru_policy == 0) {
+	LLC.setMRU(parent_L4);
+												
 												DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L4 0x%x\n", parent_L4);
+	}
 												Addr parent_L5 := getParentAddr(parent_L4);
 												if (parent_L5 != intToAddress(0) && LLC.isTagPresent(parent_L5)) {
-													LLC.setMRU(parent_L5);
+													if (mru_policy == 0) {
+	LLC.setMRU(parent_L5);
+													
 													DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L5 0x%x\n", parent_L5);
+	}
 													Addr parent_L6 := getParentAddr(parent_L5);
 													if (parent_L6 != intToAddress(0) && LLC.isTagPresent(parent_L6)) {
-														LLC.setMRU(parent_L6);
-														DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L6 (Root) 0x%x\n", parent_L6);
+														if (mru_policy == 0) {
+	LLC.setMRU(parent_L6);
+														DPRINTF(Tectree, "[MRU Update] Auth Hit: Aggiornato MRU del Counter L6  0x%x\n", parent_L6);
+	}
 													}
 												}
 											}
@@ -972,22 +1000,34 @@ machine(MachineType:Directory, "Directory protocol")
             // SLICC non supporta il "while", quindi srotoliamo il ciclo (max 6 livelli)
             Addr p1 := getParentAddr(address);
             if (p1 != intToAddress(0) && LLC.isTagPresent(p1)) {
-                LLC.setMRU(p1);
+                if (mru_policy == 0) {
+	LLC.setMRU(p1);
+	}
                 Addr p2 := getParentAddr(p1);
                 if (p2 != intToAddress(0) && LLC.isTagPresent(p2)) {
-                    LLC.setMRU(p2);
+                    if (mru_policy == 0) {
+	LLC.setMRU(p2);
+	}
                     Addr p3 := getParentAddr(p2);
                     if (p3 != intToAddress(0) && LLC.isTagPresent(p3)) {
-                        LLC.setMRU(p3);
+                        if (mru_policy == 0) {
+	LLC.setMRU(p3);
+	}
                         Addr p4 := getParentAddr(p3);
                         if (p4 != intToAddress(0) && LLC.isTagPresent(p4)) {
-                            LLC.setMRU(p4);
+                            if (mru_policy == 0) {
+	LLC.setMRU(p4);
+	}
                             Addr p5 := getParentAddr(p4);
                             if (p5 != intToAddress(0) && LLC.isTagPresent(p5)) {
-                                LLC.setMRU(p5);
+                                if (mru_policy == 0) {
+	LLC.setMRU(p5);
+	}
                                 Addr p6 := getParentAddr(p5);
                                 if (p6 != intToAddress(0) && LLC.isTagPresent(p6)) {
-                                    LLC.setMRU(p6);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(p6);
+	}
                                 }
                             }
                         }
@@ -1090,32 +1130,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -1182,32 +1234,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -1274,32 +1338,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -1366,32 +1442,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -1458,32 +1546,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -1550,32 +1650,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -1642,38 +1754,50 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
                         DPRINTF(Tectree, "[Counter-Hit] Counter L1 0x%x incrementato a C_M per il FlushRep del blocco dati 0x%x\n", L1, data_addr);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
                             DPRINTF(Tectree, "[Counter-Hit] Counter L2 0x%x incrementato a C_M\n", L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
                                 DPRINTF(Tectree, "[Counter-Hit] Counter L3 0x%x incrementato a C_M\n", L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
                                     DPRINTF(Tectree, "[Counter-Hit] Counter L4 0x%x incrementato a C_M\n", L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
                                         DPRINTF(Tectree, "[Counter-Hit] Counter L5 0x%x incrementato a C_M\n", L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
                                             DPRINTF(Tectree, "[Counter-Hit] Counter L6 0x%x incrementato a C_M\n", L6);
+	}
                                         }
                                     }
                                 }
@@ -1740,32 +1864,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -1832,32 +1968,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -1924,32 +2072,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -2016,32 +2176,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -2108,32 +2280,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -2200,32 +2384,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -2292,32 +2488,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -2384,32 +2592,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -2476,32 +2696,44 @@ machine(MachineType:Directory, "Directory protocol")
                     if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
                         getLLCEntry(L1).Dirty := true;
                         getDirectoryEntry(L1).DirState := State:C_M;
-                        LLC.setMRU(L1);
+                        if (mru_policy == 0) {
+	LLC.setMRU(L1);
+	}
                         Addr L2 := getParentAddr(L1);
                         if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
                             getLLCEntry(L2).Dirty := true;
                             getDirectoryEntry(L2).DirState := State:C_M;
-                            LLC.setMRU(L2);
+                            if (mru_policy == 0) {
+	LLC.setMRU(L2);
+	}
                             Addr L3 := getParentAddr(L2);
                             if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
                                 getLLCEntry(L3).Dirty := true;
                                 getDirectoryEntry(L3).DirState := State:C_M;
-                                LLC.setMRU(L3);
+                                if (mru_policy == 0) {
+	LLC.setMRU(L3);
+	}
                                 Addr L4 := getParentAddr(L3);
                                 if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
                                     getLLCEntry(L4).Dirty := true;
                                     getDirectoryEntry(L4).DirState := State:C_M;
-                                    LLC.setMRU(L4);
+                                    if (mru_policy == 0) {
+	LLC.setMRU(L4);
+	}
                                     Addr L5 := getParentAddr(L4);
                                     if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
                                         getLLCEntry(L5).Dirty := true;
                                         getDirectoryEntry(L5).DirState := State:C_M;
-                                        LLC.setMRU(L5);
+                                        if (mru_policy == 0) {
+	LLC.setMRU(L5);
+	}
                                         Addr L6 := getParentAddr(L5);
                                         if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
                                             getLLCEntry(L6).Dirty := true;
                                             getDirectoryEntry(L6).DirState := State:C_M;
-                                            LLC.setMRU(L6);
+                                            if (mru_policy == 0) {
+	LLC.setMRU(L6);
+	}
                                         }
                                     }
                                 }
@@ -2584,43 +2816,55 @@ machine(MachineType:Directory, "Directory protocol")
 		if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
 			getLLCEntry(L1).Dirty := true;
 			getDirectoryEntry(L1).DirState := State:C_M;
-			LLC.setMRU(L1);
-            DPRINTF(Tectree, "[Counter-Hit] Counter L1 0x%x incrementato a C_M per lo sfratto del blocco 0x%x\n", L1, address);
+			if (mru_policy == 0) {
+				LLC.setMRU(L1);
+				DPRINTF(Tectree, "[Counter-Hit] Counter L1 0x%x incrementato a C_M per lo sfratto del blocco 0x%x\n", L1, address);
+			}
 
 			Addr L2 := getParentAddr(L1);
 			if (L2 != intToAddress(0) && LLC.isTagPresent(L2)) {
 				getLLCEntry(L2).Dirty := true;
 				getDirectoryEntry(L2).DirState := State:C_M;
-				LLC.setMRU(L2);
+				if (mru_policy == 0) {
+	LLC.setMRU(L2);
                 DPRINTF(Tectree, "[Counter-Hit] Counter L2 0x%x incrementato a C_M\n", L2);
+	}
 
 				Addr L3 := getParentAddr(L2);
 				if (L3 != intToAddress(0) && LLC.isTagPresent(L3)) {
 					getLLCEntry(L3).Dirty := true;
 					getDirectoryEntry(L3).DirState := State:C_M;
-					LLC.setMRU(L3);
+					if (mru_policy == 0) {
+	LLC.setMRU(L3);
                     DPRINTF(Tectree, "[Counter-Hit] Counter L3 0x%x incrementato a C_M\n", L3);
+	}
 
 					Addr L4 := getParentAddr(L3);
 					if (L4 != intToAddress(0) && LLC.isTagPresent(L4)) {
 						getLLCEntry(L4).Dirty := true;
 						getDirectoryEntry(L4).DirState := State:C_M;
-						LLC.setMRU(L4);
+						if (mru_policy == 0) {
+	LLC.setMRU(L4);
                         DPRINTF(Tectree, "[Counter-Hit] Counter L4 0x%x incrementato a C_M\n", L4);
+	}
 
 						Addr L5 := getParentAddr(L4);
 						if (L5 != intToAddress(0) && LLC.isTagPresent(L5)) {
 							getLLCEntry(L5).Dirty := true;
 							getDirectoryEntry(L5).DirState := State:C_M;
-							LLC.setMRU(L5);
+							if (mru_policy == 0) {
+	LLC.setMRU(L5);
                             DPRINTF(Tectree, "[Counter-Hit] Counter L5 0x%x incrementato a C_M\n", L5);
+	}
 
 							Addr L6 := getParentAddr(L5);
 							if (L6 != intToAddress(0) && LLC.isTagPresent(L6)) {
 								getLLCEntry(L6).Dirty := true;
 								getDirectoryEntry(L6).DirState := State:C_M;
-								LLC.setMRU(L6);
+								if (mru_policy == 0) {
+	LLC.setMRU(L6);
                                 DPRINTF(Tectree, "[Counter-Hit] Counter L6 0x%x incrementato a C_M\n", L6);
+	}
 							}
 						}
 					}
@@ -2885,8 +3129,16 @@ machine(MachineType:Directory, "Directory protocol")
     // 1. Alloco TBE per parcheggiare il dato
     // 2. Chiedo il Counter e mi metto in slot (fetchCounterForEviction)
     // 3. DEALLOCO SUBITO la cache per sbloccare la coda e non causare deadlock!
-    transition(I, LLC_Repl_Dirty_Auth_Miss, I_Evict_Auth) { allocateTBE_Eviction; fetchCounterForEviction; deallocateLLC; }
-    transition(S, LLC_Repl_Dirty_Auth_Miss, S_Evict_Auth) { allocateTBE_Eviction; fetchCounterForEviction; deallocateLLC; }
+    transition(I, LLC_Repl_Dirty_Auth_Miss, I_Evict_Auth) { 
+		allocateTBE_Eviction; 
+		fetchCounterForEviction; 
+		deallocateLLC; 
+		}
+    transition(S, LLC_Repl_Dirty_Auth_Miss, S_Evict_Auth) { 
+		allocateTBE_Eviction; 
+		fetchCounterForEviction; 
+		deallocateLLC; 
+		}
     transition(E, {LLC_Repl_Dirty, LLC_Repl_Dirty_Auth_Miss}, E_Evict_Flush) { 
         allocateTBE_Eviction; 
         sendFlushReq; 
