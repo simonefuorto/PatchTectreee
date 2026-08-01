@@ -129,7 +129,7 @@ def create_system(options, full_system, system, dma_ports, bootmem, ruby_system,
         dir_cntrl.mru_policy = options.mru_policy
         
         dir_cntrl.LLC = DirCache(
-            size="2MB",
+            size=options.l2_size,
             assoc=16,
             start_index_bit=block_size_bits,
         )
