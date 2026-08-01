@@ -36,21 +36,20 @@ def main():
                     
                 if addr_str:
                     addr = int(addr_str, 16)
-                    # Classificazione basata sull'offset in memoria (Physical Memory = 4GB)
-                    # Arity = 16 
+                    # Classificazione basata sull'offset in memoria (Arity = 15)
                     if addr < 0x80000000:
                         data_evictions += 1
-                    elif addr < 0x88000000:
+                    elif addr < 0x888888C0:
                         l1 += 1
-                    elif addr < 0x89000000:
+                    elif addr < 0x891A6C00:
                         l2 += 1
-                    elif addr < 0x89200000:
+                    elif addr < 0x89242140:
                         l3 += 1
-                    elif addr < 0x89240000:
+                    elif addr < 0x8924C700:
                         l4 += 1
-                    elif addr < 0x89248000:
+                    elif addr < 0x8924D240:
                         l5 += 1
-                    elif addr < 0x8924a000:
+                    elif addr < 0x8924D300:
                         l6 += 1
                     else:
                         l7 += 1 # Root
