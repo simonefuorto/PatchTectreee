@@ -18,21 +18,18 @@ def main():
     l6 = 0
     l7 = 0
 
-    # Pattern Regex per intercettare gli indirizzi sfrattati nel log
-    pattern_diretta = re.compile(r"La vittima (0x[0-9a-fA-F]+)")
-    pattern_cascata = re.compile(r"Il blocco (0x[0-9a-fA-F]+) ha tutto il ramo pronto!")
+    # Pattern Regex che intercetta ESCLUSIVAMENTE la stampa in allocateTBE_Eviction
+    # (ignorando "(Response)" che è stampato da fetchCounterForEviction e ignorando i "Cascading")
+    pattern_vittima = re.compile(r"\[Eviction (?:Diretta|Sospesa)\] La vittima (0x[0-9a-fA-F]+)")
 
     try:
         with open(trace_file, "r") as f:
             for line in f:
-                match1 = pattern_diretta.search(line)
-                match2 = pattern_cascata.search(line)
+                match = pattern_vittima.search(line)
                 
                 addr_str = None
-                if match1:
-                    addr_str = match1.group(1)
-                elif match2:
-                    addr_str = match2.group(1)
+                if match:
+                    addr_str = match.group(1)
                     
                 if addr_str:
                     addr = int(addr_str, 16)
