@@ -37,6 +37,9 @@ machine(MachineType:Directory, "Directory protocol")
       DirectoryMemory * directory;
       CacheMemory * LLC;
 
+	  int root_cnt_0, default="0", desc="Root Slot 0 (L6 ramo 0)";
+	  int root_cnt_1, default="0", desc="Root Slot 1 (L6 ramo 1)";
+	  int root_cnt_2, default="0", desc="Root Slot 2 (L6 ramo 2)";
 	  int mru_policy, default="0";
 	  
 	  int mts := 1;
@@ -234,6 +237,10 @@ machine(MachineType:Directory, "Directory protocol")
     LLC_Entry getLLCEntry(Addr addr), return_by_pointer="yes" {
         LLC_Entry llc_entry := static_cast(LLC_Entry, "pointer", LLC.lookup(addr));
         return llc_entry;
+    }
+
+    int getL6Index(Addr addr) {
+        return (addressToInt(addr) / 64) / 11390625;
     }
 
     Addr getFirstMissingParent(Addr current_addr) {
@@ -993,6 +1000,22 @@ machine(MachineType:Directory, "Directory protocol")
     action(recordPrefetchHit, "ph", desc="Record a clean metadata eviction") {
         LLC.profilePrefetchHit();
     }
+
+    action(incrementRootCounter, "iRC", desc="Incrementa il Root Counter su statistica nativa") {
+        int idx := getL6Index(address);
+        if (idx == 0) {
+            root_cnt_0 := root_cnt_0 + 1;
+            DPRINTF(Tectree, "[Root]: Incremento per Scrittura Ramo 0 (Valore: %d)\n", root_cnt_0);
+        } else if (idx == 1) {
+            root_cnt_1 := root_cnt_1 + 1;
+            DPRINTF(Tectree, "[Root]: Incremento per Scrittura Ramo 1 (Valore: %d)\n", root_cnt_1);
+        } else if (idx == 2) {
+            root_cnt_2 := root_cnt_2 + 1;
+            DPRINTF(Tectree, "[Root]: Incremento per Scrittura Ramo 2 (Valore: %d)\n", root_cnt_2);
+        }
+        LLC.profileDemandHit();
+    }
+
     action(deallocateLLC, "dea", desc="Deallocate LLC block") {
         if (is_valid(cache_entry)) {
             LLC.deallocate(address);
@@ -3139,11 +3162,13 @@ machine(MachineType:Directory, "Directory protocol")
     // 2. Chiedo il Counter e mi metto in slot (fetchCounterForEviction)
     // 3. DEALLOCO SUBITO la cache per sbloccare la coda e non causare deadlock!
     transition(I, LLC_Repl_Dirty_Auth_Miss, I_Evict_Auth) { 
+		incrementRootCounter;
 		allocateTBE_Eviction; 
 		fetchCounterForEviction; 
 		deallocateLLC; 
 		}
     transition(S, LLC_Repl_Dirty_Auth_Miss, S_Evict_Auth) { 
+		incrementRootCounter;
 		allocateTBE_Eviction; 
 		fetchCounterForEviction; 
 		deallocateLLC; 
@@ -3167,12 +3192,14 @@ machine(MachineType:Directory, "Directory protocol")
     // Dirty eviction: Must write back to Memory
     transition(I, LLC_Repl_Dirty, I_Evicting) { 
 		incrementCounter;
+		incrementRootCounter;
 		allocateTBE_Eviction; 
 		sendBlockToMem_Eviction; 
 		deallocateLLC; 
 		}
     transition(S, LLC_Repl_Dirty, S_Evicting) {
 		incrementCounter;
+		incrementRootCounter;
 		allocateTBE_Eviction; 
 		sendBlockToMem_Eviction; 
 		deallocateLLC; 
@@ -3181,6 +3208,7 @@ machine(MachineType:Directory, "Directory protocol")
         clearOwner;
         storeDataBlockTBE;
         incrementCounter;
+        incrementRootCounter;
         sendBlockToMem_Eviction;
         deallocateLLC;
         popResponseQueue;
@@ -3189,6 +3217,7 @@ machine(MachineType:Directory, "Directory protocol")
     transition(E_Evict_Flush, LLC_Repl_Dirty_Auth_Miss_From_Flush, I_Evict_Auth) {
         clearOwner;
         storeDataBlockTBE;
+        incrementRootCounter;
         fetchCounterForEviction;
         deallocateLLC;
         popResponseQueue;
