@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+// [REF: TEST_THRASHING]
 // Scriviamo 4 MB di dati (65536 blocchi da 64 byte).
 // Questo supererà non solo la L1 (1kB), ma anche la LLC (che è hardcoded a 2MB),
 // forzando lo sfratto (LLC_Repl_Dirty) verso la MEMORIA e scatenando l'aggiornamento a cascata!
