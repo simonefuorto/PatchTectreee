@@ -35,14 +35,10 @@ I counterChunk non vengono modificati ad ogni scrittura del dato in cache, ma es
 
 ----------------------------------------------------------------------------------------------------------
 
-## 3. Estensioni C++ Core (Policy e WakeUp)
-Le modifiche al backend C++ di Ruby permettono la comunicazione di sblocco asincrono e l'iniezione delle politiche di sostituzione modificate.
+## 3. Estensioni C++ Core (Policy)
+Le modifiche al backend C++ di Ruby permettono l'iniezione delle politiche di sostituzione modificate.
 
-### A. WakeUp Bridge
-- **File di riferimento:** `build/X86/mem/ruby/protocol/TARDISTSO_TECTREE_DirController.cc` *(File auto-generato da SLICC in fase di build)*
-*   **[REF: WAKEUP_BRIDGE]**: Implementazione delle chiamate di sblocco (wakeUp and stall) della message queue che innescano il risveglio degli stati di parcheggio (State Bouncing) nella macchina a stati SLICC.
-
-### B. Policy di Rimpiazzo MRU (Topology-Aware)
+### A. Policy di Rimpiazzo MRU (Topology-Aware)
 - **File di riferimento:** `src/mem/ruby/structures/CacheMemory.cc`
 *   **[REF: TECTREE_MRU_POLICY]**: All'interno del metodo `setMRU()`, la logica è stata differenziata in base al flag `mru_policy`:
     *   `0`: Protezione Strict (Baseline teorica).
