@@ -39,7 +39,7 @@ I counterChunk non vengono modificati ad ogni scrittura del dato in cache, ma es
 Le modifiche al backend C++ di Ruby permettono la comunicazione di sblocco asincrono e l'iniezione delle politiche di sostituzione modificate.
 
 ### A. WakeUp Bridge
-- **File di riferimento:** `src/learning_gem5/tardis_tso_tectree/TARDISTSO_TECTREE_DirController.cc`
+- **File di riferimento:** `build/X86/mem/ruby/protocol/TARDISTSO_TECTREE_DirController.cc` *(File auto-generato da SLICC in fase di build)*
 *   **[REF: WAKEUP_BRIDGE]**: Implementazione delle chiamate di sblocco (wakeUp and stall) della message queue che innescano il risveglio degli stati di parcheggio (State Bouncing) nella macchina a stati SLICC.
 
 ### B. Policy di Rimpiazzo MRU (Topology-Aware)
