@@ -275,6 +275,7 @@ structure(RubyPrefetcherProxy, external = "yes") {
 }
 
 Addr calcCounterAddr(Addr addr);
+// [REF: TREE_MATH]
 Addr getParentAddr(Addr addr);
 Addr calcL2Addr(Addr l1_addr);
 Addr calcL3Addr(Addr l2_addr);

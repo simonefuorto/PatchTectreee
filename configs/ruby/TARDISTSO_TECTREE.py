@@ -126,6 +126,7 @@ def create_system(options, full_system, system, dma_ports, bootmem, ruby_system,
 
     for i, dir_cntrl in enumerate(dir_cntrl_nodes):
         dir_cntrl.lease = lease
+        # [REF: PYTHON_CONFIGS]
         dir_cntrl.mru_policy = options.mru_policy
         dir_cntrl.root_cnt_0 = 0
         dir_cntrl.root_cnt_1 = 0

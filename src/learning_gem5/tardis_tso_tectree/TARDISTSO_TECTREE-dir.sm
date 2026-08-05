@@ -94,6 +94,7 @@ machine(MachineType:Directory, "Directory protocol")
         E_Evicting, AccessPermission:Busy, desc="A block is waiting for Memory Ack to complete an LLC eviction from E";
 
 		// Stati per l'autenticazione
+        // [REF: STATE_BOUNCING]
         I_Fetch_Auth, AccessPermission:Busy, desc="Waiting for Counter from I";
         S_Fetch_Auth, AccessPermission:Busy, desc="Waiting for Counter from S";
         E_Fetch_Auth, AccessPermission:Busy, desc="Waiting for Counter from E";
@@ -239,6 +240,7 @@ machine(MachineType:Directory, "Directory protocol")
         return llc_entry;
     }
 
+    // [REF: ROOT_ARRAY_LOGIC]
     int getL6Index(Addr addr) {
         return (addressToInt(addr) / 64) / 11390625;
     }
@@ -2843,6 +2845,7 @@ machine(MachineType:Directory, "Directory protocol")
         }
 	}
 	
+    // [REF: METADATA_UPDATE]
 	action(incrementCounter,"inc", desc="Incrementa l'intero ramo dei Counter presenti in LLC"){
 		Addr L1 := getParentAddr(address);
 		if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {

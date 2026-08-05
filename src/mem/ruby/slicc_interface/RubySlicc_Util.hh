@@ -124,6 +124,7 @@ inline bool isL4Addr(Addr addr) { return (addr >= getL4BaseAddr() && addr < getL
 inline bool isL5Addr(Addr addr) { return (addr >= getL5BaseAddr() && addr < getL6BaseAddr()); }
 inline bool isL6Addr(Addr addr) { return (addr >= getL6BaseAddr() && addr < getL7BaseAddr()); }
 
+// [REF: TREE_MATH]
 inline Addr getParentAddr(Addr addr) {
     if (!isMetadataAddr(addr)) return calcCounterAddr(addr); // Dati -> L1
     if (isL1Addr(addr)) return calcL2Addr(addr);
