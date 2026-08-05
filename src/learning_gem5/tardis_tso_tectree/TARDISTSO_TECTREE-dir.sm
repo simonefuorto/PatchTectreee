@@ -2961,6 +2961,7 @@ machine(MachineType:Directory, "Directory protocol")
 	}
 	
     // [REF: METADATA_UPDATE]
+	// [REF: LAZY_METADATA_UPDATE]
 	action(incrementCounter,"inc", desc="Incrementa l'intero ramo dei Counter presenti in LLC"){
 		Addr L1 := getParentAddr(address);
 		if (L1 != intToAddress(0) && LLC.isTagPresent(L1)) {
@@ -3043,6 +3044,7 @@ machine(MachineType:Directory, "Directory protocol")
         DPRINTF(Tectree, "[WAKE-UP] Duplicate Counter 0x%x arrived. Risveglio i buffer in stallo.\\n", address);
     }
 
+	// [REF: WAKEUP_BRIDGE]
 	action(wakeUpAll, "wuA", desc="Wake up all stalled buffers blindly") {
 		wakeUpAllBuffers();
 	}    
