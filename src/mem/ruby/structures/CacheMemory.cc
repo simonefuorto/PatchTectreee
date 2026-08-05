@@ -373,7 +373,6 @@ CacheMemory::lookup(Addr address) const
 }
 
 // Sets the most recently used bit for a cache block
-// [REF: TECTREE_MRU_POLICY]
 void
 CacheMemory::setMRU(Addr address)
 {

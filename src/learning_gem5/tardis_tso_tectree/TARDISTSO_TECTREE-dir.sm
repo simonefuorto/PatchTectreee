@@ -1027,6 +1027,7 @@ machine(MachineType:Directory, "Directory protocol")
 
 
 
+    // [REF: TECTREE_MRU_POLICY]
     action(setMRU, "mru", desc="Set MRU") {
         if (is_valid(cache_entry)) {
             LLC.setMRU(address);
