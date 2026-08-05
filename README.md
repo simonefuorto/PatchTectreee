@@ -31,7 +31,5 @@ L'obiettivo primario è la valutazione dell'impatto prestazionale, la gestione a
   - [x] 5.3: Estensione multilivello eviction
 
 ### FASE 3: Verifica e Convalida Finale (PIANIFICATA)
-- [ ] **STEP 6: Analisi Statistica Finale**
-  - [ ] Esecuzione conclusiva della suite di benchmark.
-  - [ ] Confronto quantitativo (Hit/Miss, Latenza globale, Traffico di rete) tra Baseline, Tectree a 1 Livello e Tectree Multilivello.
-  - [ ] Analisi di Sensibilità alla Latenza Crittografica (AES-ECB nativo vs ideal-CTR).
+- [ ] **STEP 6: Analisi di Sensibilità alla Latenza Crittografica**
+- [ ] **STEP 7: Esecuzione conclusiva dei benchmark**
