@@ -6,7 +6,7 @@ GEM5_DIR="$SCRIPT_DIR/../../gem5"
 
 ARCH="X86"
 # Aggiornato al microbenchmark personalizzato dell'utente
-WORKLOAD="thrashing" 
+WORKLOAD="force_eviction" 
 WORKLOAD_BIN="microbenchmarks/bin/${WORKLOAD}"
 
 # Dimensioni della cache L2 da testare per verificare il Thrashing
