@@ -34,7 +34,7 @@ cd "$GEM5_DIR" || exit
 if git rev-parse --verify "$GEM5_VERSION" &> /dev/null; then
     echo "[2/4] Cambio alla versione gem5 $GEM5_VERSION..."
     git checkout "$GEM5_VERSION"
-    pip install -r requirements.txt
+    pip install --break-system-packages -r requirements.txt || pip install -r requirements.txt
 else
     echo "ERRORE: Versione $GEM5_VERSION non trovata in gem5."
     exit 1
