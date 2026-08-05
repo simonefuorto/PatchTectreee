@@ -1,6 +1,10 @@
 #!/bin/bash
 
-DEST="gem5"
+# Identifica automaticamente la directory dello script e la root del progetto
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+REPO_ROOT="$SCRIPT_DIR/.."
+GEM5_DIR="$REPO_ROOT/../gem5"
+
 ARCH="X86"
 PROTOCOL="TARDISTSO_TECTREE"
 BENCHMARKS=("ping_pong" "sweet_spot" "streaming")
@@ -8,19 +12,20 @@ BENCHMARKS=("ping_pong" "sweet_spot" "streaming")
 echo "=========================================================="
 echo "Compilazione dei Microbenchmarks"
 echo "=========================================================="
-cd microbenchmarks
-make clean
-make
-cd ..
+# NOTA: I binari sono presi direttamente dalla cartella tests della repo Tectree
+# cd microbenchmarks
+# make clean
+# make
+# cd ..
 
-if [ ! -d "$DEST" ]; then
-  echo "Gem5 directory not found!"
+if [ ! -d "$GEM5_DIR" ]; then
+  echo "ERRORE: Cartella gem5 non trovata al percorso previsto ($GEM5_DIR)!"
   exit 1
 fi
 
 GEM5_EXE="./build/${ARCH}_${PROTOCOL}/gem5.opt"
 
-cd "$DEST"
+cd "$GEM5_DIR"
 mkdir -p results_microbench
 
 echo "=========================================================="
@@ -48,7 +53,7 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
     # Esegue gem5
     $GEM5_EXE \
         configs/deprecated/example/se.py \
-        -c ../patch_tectree/tests/test-progs/tardis_tso/${ARCH}/microbenchmarks/bin/${BENCHMARK} \
+        -c $REPO_ROOT/tests/test-progs/tardis_tso/${ARCH}/microbenchmarks/bin/${BENCHMARK} \
         --options="$OPTIONS_FLAG" \
         -n $N_FLAG --cpu-type ${ARCH}TimingSimpleCPU --ruby --l2_size=2MB --mem-size=4GB --mru-policy=1
     
