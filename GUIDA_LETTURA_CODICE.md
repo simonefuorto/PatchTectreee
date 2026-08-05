@@ -55,11 +55,29 @@ Le modifiche al backend C++ di Ruby permettono l'iniezione delle politiche di so
 - **File di riferimento:** `configs/ruby/TARDISTSO_TECTREE.py`
 *   **[REF: PYTHON_CONFIGS]**: Inserimento dei registri Root fisici e del binding del parametro `mru_policy` a livello di simulatore per permettere diversi esperimenti con diverse dimensioni del componente LLC e della policy senza dover ricompilare tutto il progetto.
 
-### B. Metodologia di Microbenchmarking e Test
-I carichi di lavoro (workload) per validare l'architettura sono contenuti sotto la directory `tests/test-progs/tardis_tso/x86/`. Per eseguire questi test in gem5, il binario cross-compilato viene passato come argomento (tramite flag `--cmd`) agli script di configurazione Python.
+### B. Metodologia di Microbenchmarking e Test (Automazione)
+I carichi di lavoro (workload) per validare l'architettura sono contenuti sotto la directory `tests/test-progs/tardis_tso/x86/`. Per agevolare l'estrazione e il confronto dei dati statistici generati da gem5 (come i miss rate o il traffico di rete), l'esecuzione dei test è stata completamente automatizzata tramite una suite di script bash numerati all'interno della cartella `script_run/`.
 
-- **Thrashing / Force Eviction:** `tests/test-progs/tardis_tso/x86/microbenchmarks/src/force_eviction.c`
-*   **[REF: TEST_THRASHING]**: Questo esperimento C è stato ingegnerizzato per allocare grandi array (es. 64MB) con un pattern di accesso a stride di 512 Byte (allineato alla granularità dei contatori L1). Generando migliaia di accessi distruttivi, il microbenchmark satura deliberatamente la LLC innescando un fenomeno di "Thrashing" severo. Questo approccio isola e quantifica matematicamente l'efficienza delle 3 policy di rimpiazzo (MRU) sotto stress estremo.
+Tutti i risultati e le metriche di simulazione verranno salvati nei file `stats.txt` generati automaticamente dal simulatore, localizzabili all'interno della cartella `m5out/` di gem5 (i percorsi esatti dipendono dallo script eseguito).
 
-- **Radix Benchmark (radix_bm):** `tests/test-progs/tardis_tso/x86/radix_bm/`
-*   **[REF: TEST_RADIX]**: Benchmark più complesso (ispirato alle suite classiche SPLASH) che implementa un algoritmo di Radix Sort multi-thread. A differenza del test sintetico precedente, questo fornisce un traffico di memoria realistico ed eterogeneo, fondamentale per valutare il tasso di successo del *Lazy Metadata Update* e l'efficacia dello *State Bouncing* quando il Tectree è sotto pressione da carichi di elaborazione reali.
+Di seguito il dettaglio dei 4 script di test:
+
+#### 1. Stress Test: Radix Sweep (Size)
+- **Cosa fa:** Esegue il benchmark **[REF: TEST_RADIX]** (un algoritmo di Radix Sort multi-thread ispirato a SPLASH) variando la dimensione dell'array dati (Piccolo 16k, Medio 64k, Grande 131k). Fornisce un traffico di memoria realistico ed eterogeneo per valutare la resilienza del Tectree.
+- **Comando di esecuzione:** `./script_run/4.run_radix_sweep.sh`
+- **Risultati:** Le statistiche vengono salvate in `gem5/m5out/radix_sweep_<DIMENSIONE>/stats.txt`.
+
+#### 2. Stress Test: Radix Sweep (Policy)
+- **Cosa fa:** Esegue lo stesso benchmark Radix, ma questa volta spazzola le **3 Policy MRU** sviluppate in questo progetto (0 = Strict Baseline, 1 = Standard LRU, 2 = Randomizzato Tectree Ottimizzato) incrociandole con le dimensioni dell'array.
+- **Comando di esecuzione:** `./script_run/5.run_policies_sweep.sh`
+- **Risultati:** Le statistiche vengono salvate in `gem5/m5out/radix_sweep_policy_<POLICY>_size_<DIMENSIONE>/stats.txt`.
+
+#### 3. Stress Test Estremo: Thrashing (Cache L2 Sweep)
+- **Cosa fa:** Esegue il microbenchmark sintetico **[REF: TEST_THRASHING]** (`force_eviction.c`). Questo test alloca giganteschi array (es. 64MB) e li accede con un pattern a stride (512 Byte) per forzare l'evizione sistematica dei contatori crittografici. Lo script varia la dimensione della Cache L2 (da 64kB a 1MB) e incrocia le 3 Policy MRU per misurare le performance di ritenzione sotto stress estremo.
+- **Comando di esecuzione:** `./script_run/6.run_l2_sweep.sh`
+- **Risultati:** Le statistiche vengono salvate in `gem5/m5out/thrashing_l2_<DIMENSIONE_L2>_policy_<POLICY>/stats.txt`.
+
+#### 4. Validazione: Microbenchmarks (Ping Pong, Streaming)
+- **Cosa fa:** Esegue una suite di microbenchmarks C più piccoli (`ping_pong`, `sweet_spot`, `streaming`) studiati per validare scenari di sharing specifici (es. due core che si rimbalzano una singola cache line) e verificare l'assenza di deadlock.
+- **Comando di esecuzione:** `./script_run/7.run_microbenchmarks.sh`
+- **Risultati:** Le statistiche vengono salvate singolarmente in `gem5/m5out/<NOME_BENCHMARK>/stats.txt`.
