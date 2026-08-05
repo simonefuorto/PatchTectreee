@@ -6,8 +6,7 @@ GEM5_DIR="$SCRIPT_DIR/../../gem5"
 
 ARCH="X86"
 # Aggiornato al microbenchmark personalizzato dell'utente
-WORKLOAD="force_eviction" 
-WORKLOAD_BIN="microbenchmarks/bin/${WORKLOAD}"
+WORKLOAD="force_eviction"
 
 # Dimensioni della cache L2 da testare per verificare il Thrashing
 L2_SIZES=("64kB" "128kB" "256kB" "512kB" "1MB")
@@ -46,7 +45,7 @@ for POLICY in "${POLICIES[@]}"; do
         # Esecuzione senza parametri '-n' aggiuntivi per il binario C
         $GEM5_EXE \
             configs/deprecated/example/se.py \
-            -c ../microbenchmarks/bin/thrashing \
+            -c tests/test-progs/tardis_tso/${ARCH}/microbenchmarks/bin/${WORKLOAD} \
             -n 5 --cpu-type ${ARCH}TimingSimpleCPU --ruby --l2_size=$L2_SIZE --mem-size=4GB --mru-policy=$POLICY
         
         RESULT_DIR="results_l2_sweep/stats_Policy${POLICY}_${L2_SIZE}"
