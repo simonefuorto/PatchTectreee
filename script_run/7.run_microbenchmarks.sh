@@ -53,7 +53,7 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
     # Esegue gem5
     $GEM5_EXE \
         configs/deprecated/example/se.py \
-        -c $REPO_ROOT/tests/test-progs/tardis_tso/${ARCH}/microbenchmarks/bin/${BENCHMARK} \
+        -c $REPO_ROOT/tests/test-progs/tardis_tso/x86/microbenchmarks/bin/${BENCHMARK} \
         --options="$OPTIONS_FLAG" \
         -n $N_FLAG --cpu-type ${ARCH}TimingSimpleCPU --ruby --l2_size=2MB --mem-size=4GB --mru-policy=1
     

@@ -58,7 +58,7 @@ for PROTOCOL in "${PROTOCOLS[@]}"; do
         # Lancia gem5 con la dimensione dell'array personalizzata
         $GEM5_EXE \
             configs/deprecated/example/se.py \
-            -c tests/test-progs/tardis_tso/${ARCH}/${WORKLOAD}/bin/${WORKLOAD} \
+            -c tests/test-progs/tardis_tso/x86/${WORKLOAD}/bin/${WORKLOAD} \
             --options="-p 4 -n $SIZE -t" \
             -n 5 --cpu-type ${ARCH}TimingSimpleCPU --ruby --l2_size=1MB --mem-size=4GB --mru-policy=2
         
