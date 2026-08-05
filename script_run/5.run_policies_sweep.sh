@@ -2,6 +2,7 @@
 
 # Identifica automaticamente la directory dello script e la cartella gem5 (assumendo che siano "gemelli")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+REPO_ROOT="$SCRIPT_DIR/.."
 GEM5_DIR="$SCRIPT_DIR/../../gem5"
 
 ARCH="X86"
@@ -46,7 +47,7 @@ for POLICY in "${POLICIES[@]}"; do
         # Lancia gem5 con la dimensione dell'array e la policy specifica
         $GEM5_EXE \
             configs/deprecated/example/se.py \
-            -c tests/test-progs/tardis_tso/x86/${WORKLOAD}/bin/${WORKLOAD} \
+            -c $REPO_ROOT/tests/test-progs/tardis_tso/x86/${WORKLOAD}/bin/${WORKLOAD} \
             --options="-p 4 -n $SIZE -t" \
             -n 5 --cpu-type ${ARCH}TimingSimpleCPU --ruby --l2_size=1MB --mem-size=4GB --mru-policy=$POLICY
         

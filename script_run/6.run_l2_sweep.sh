@@ -2,6 +2,7 @@
 
 # Identifica automaticamente la directory dello script e la cartella gem5 (assumendo che siano "gemelli")
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+REPO_ROOT="$SCRIPT_DIR/.."
 GEM5_DIR="$SCRIPT_DIR/../../gem5"
 
 ARCH="X86"
@@ -45,7 +46,7 @@ for POLICY in "${POLICIES[@]}"; do
         # Esecuzione senza parametri '-n' aggiuntivi per il binario C
         $GEM5_EXE \
             configs/deprecated/example/se.py \
-            -c tests/test-progs/tardis_tso/x86/microbenchmarks/bin/${WORKLOAD} \
+            -c $REPO_ROOT/tests/test-progs/tardis_tso/x86/microbenchmarks/bin/${WORKLOAD} \
             -n 5 --cpu-type ${ARCH}TimingSimpleCPU --ruby --l2_size=$L2_SIZE --mem-size=4GB --mru-policy=$POLICY
         
         RESULT_DIR="results_l2_sweep/stats_Policy${POLICY}_${L2_SIZE}"
