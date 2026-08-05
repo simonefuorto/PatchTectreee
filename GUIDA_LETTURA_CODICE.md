@@ -73,7 +73,7 @@ Di seguito il dettaglio dei 4 script di test:
 - **Risultati:** Le statistiche vengono salvate in `gem5/m5out/radix_sweep_policy_<POLICY>_size_<DIMENSIONE>/stats.txt`.
 
 #### 3. Stress Test Estremo: Thrashing (Cache L2 Sweep)
-- **Cosa fa:** Esegue il microbenchmark sintetico **[REF: TEST_THRASHING]** (`force_eviction.c`). Questo test alloca un array da 4MB e lo accede con un pattern a stride (64 Byte) per forzare l'evizione sistematica dei dati e dei contatori crittografici (essendo più grande della LLC). Lo script varia la dimensione della Cache L2 (da 64kB a 1MB) e incrocia le 3 Policy MRU per misurare le performance di ritenzione sotto stress estremo.
+- **Cosa fa:** Esegue il microbenchmark sintetico **[REF: TEST_THRASHING]** (`thrashing.c`). Questo test alloca un array da 4MB e lo accede con un pattern a stride (64 Byte) per forzare l'evizione sistematica dei dati e dei contatori crittografici (essendo più grande della LLC). Lo script varia la dimensione della Cache L2 (da 64kB a 1MB) e incrocia le 3 Policy MRU per misurare le performance di ritenzione sotto stress estremo.
 - **Comando di esecuzione:** `./script_run/6.run_l2_sweep.sh`
 - **Risultati:** Le statistiche vengono salvate in `gem5/m5out/thrashing_l2_<DIMENSIONE_L2>_policy_<POLICY>/stats.txt`.
 
