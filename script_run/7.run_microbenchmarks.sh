@@ -55,7 +55,7 @@ for BENCHMARK in "${BENCHMARKS[@]}"; do
         configs/deprecated/example/se.py \
         -c $REPO_ROOT/tests/test-progs/tardis_tso/x86/microbenchmarks/bin/${BENCHMARK} \
         --options="$OPTIONS_FLAG" \
-        -n $N_FLAG --cpu-type ${ARCH}TimingSimpleCPU --ruby --l2_size=2MB --mem-size=4GB --mru-policy=1
+        -n $N_FLAG --cpu-type ${ARCH}TimingSimpleCPU --ruby --l2_size=2MB --mem-size=3GB --mru-policy=1
     
     # Salva i risultati
     RESULT_DIR="results_microbench/stats_${BENCHMARK}"

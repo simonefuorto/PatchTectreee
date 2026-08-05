@@ -49,7 +49,7 @@ for POLICY in "${POLICIES[@]}"; do
             configs/deprecated/example/se.py \
             -c $REPO_ROOT/tests/test-progs/tardis_tso/x86/${WORKLOAD}/bin/${WORKLOAD} \
             --options="-p 4 -n $SIZE -t" \
-            -n 5 --cpu-type ${ARCH}TimingSimpleCPU --ruby --l2_size=1MB --mem-size=4GB --mru-policy=$POLICY
+            -n 5 --cpu-type ${ARCH}TimingSimpleCPU --ruby --l2_size=1MB --mem-size=3GB --mru-policy=$POLICY
         
         # Crea una cartella per salvare le statistiche di questa specifica esecuzione
         RESULT_DIR="results_radix/stats_${PROTOCOL}_Policy${POLICY}_${SIZE}"
