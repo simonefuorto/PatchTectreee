@@ -23,11 +23,11 @@ La base architetturale del progetto è la modellazione matematica dell'albero cr
 ## 2. Modifiche al Protocollo SLICC (Macchina a Stati)
 Il nucleo dell'innovazione risiede nella gestione avanzata e asincrona dei metadati crittografici (Counter) tra LLC e Directory.
 
-📍 **File di riferimento:** `src/learning_gem5/tardis_tso_tectree/TARDISTSO_TECTREE-dir.sm`
+**File di riferimento:** `src/learning_gem5/tardis_tso_tectree/TARDISTSO_TECTREE-dir.sm`
 
 ### A. Gestione Asincrona degli Stalli (State Bouncing)
 Per prevenire il deadlock della pipeline causato dall'assenza di un contatore crittografico genitore (Event:Auth Miss), è stata introdotta la tabella delle transazioni pendenti `AuthTBEs` accoppiata a stati di stallo transitori.
-*   **[REF: STATE_BOUNCING]**: Implementazione degli stati `I_Fetch_Auth`, `S_Fetch_Auth` e `I_Evict_Auth`. Quando la dipendenza viene risolta, il sistema C++ risveglia la coda riattivando la transizione originale e completando il ciclo in modo asincrono.
+***[REF: STATE_BOUNCING]**: Implementazione degli stati `I_Fetch_Auth`, `S_Fetch_Auth` e `I_Evict_Auth`. Quando la dipendenza viene risolta, il sistema C++ risveglia la coda riattivando la transizione originale e completando il ciclo in modo asincrono.
 
 ### B. Aggiornamento dei Metadati (Minimizzazione del Traffico)
 I counterChunk non vengono modificati ad ogni scrittura del dato in cache, ma esclusivamente al momento del suo writeback in memoria principale.
@@ -39,11 +39,11 @@ I counterChunk non vengono modificati ad ogni scrittura del dato in cache, ma es
 Le modifiche al backend C++ di Ruby permettono la comunicazione di sblocco asincrono e l'iniezione delle politiche di sostituzione modificate.
 
 ### A. WakeUp Bridge
-📍 **File di riferimento:** `src/learning_gem5/tardis_tso_tectree/TARDISTSO_TECTREE_DirController.cc`
+- **File di riferimento:** `src/learning_gem5/tardis_tso_tectree/TARDISTSO_TECTREE_DirController.cc`
 *   **[REF: WAKEUP_BRIDGE]**: Implementazione delle chiamate di sblocco (wakeUp and stall) della message queue che innescano il risveglio degli stati di parcheggio (State Bouncing) nella macchina a stati SLICC.
 
 ### B. Policy di Rimpiazzo MRU (Topology-Aware)
-📍 **File di riferimento:** `src/mem/ruby/structures/CacheMemory.cc`
+- **File di riferimento:** `src/mem/ruby/structures/CacheMemory.cc`
 *   **[REF: TECTREE_MRU_POLICY]**: All'interno del metodo `setMRU()`, la logica è stata differenziata in base al flag `mru_policy`:
     *   `0`: Protezione Strict (Baseline teorica).
     *   `1`: Policy Standard (LRU tradizionale senza priorità).
@@ -56,14 +56,14 @@ Le modifiche al backend C++ di Ruby permettono la comunicazione di sblocco asinc
 ## 4. Configurazione e Validazione
 
 ### A. Iniezione Topologica (Python)
-📍 **File di riferimento:** `configs/ruby/TARDISTSO_TECTREE.py`
+- **File di riferimento:** `configs/ruby/TARDISTSO_TECTREE.py`
 *   **[REF: PYTHON_CONFIGS]**: Inserimento dei registri Root fisici e del binding del parametro `mru_policy` a livello di simulatore per permettere diversi esperimenti con diverse dimensioni del componente LLC e della policy senza dover ricompilare tutto il progetto.
 
 ### B. Metodologia di Microbenchmarking e Test
 I carichi di lavoro (workload) per validare l'architettura sono contenuti sotto la directory `tests/test-progs/tardis_tso/x86/`. Per eseguire questi test in gem5, il binario cross-compilato viene passato come argomento (tramite flag `--cmd`) agli script di configurazione Python.
 
-📍 **Thrashing / Force Eviction:** `tests/test-progs/tardis_tso/x86/microbenchmarks/src/force_eviction.c`
+- **Thrashing / Force Eviction:** `tests/test-progs/tardis_tso/x86/microbenchmarks/src/force_eviction.c`
 *   **[REF: TEST_THRASHING]**: Questo esperimento C è stato ingegnerizzato per allocare grandi array (es. 64MB) con un pattern di accesso a stride di 512 Byte (allineato alla granularità dei contatori L1). Generando migliaia di accessi distruttivi, il microbenchmark satura deliberatamente la LLC innescando un fenomeno di "Thrashing" severo. Questo approccio isola e quantifica matematicamente l'efficienza delle 3 policy di rimpiazzo (MRU) sotto stress estremo.
 
-📍 **Radix Benchmark (radix_bm):** `tests/test-progs/tardis_tso/x86/radix_bm/`
+- **Radix Benchmark (radix_bm):** `tests/test-progs/tardis_tso/x86/radix_bm/`
 *   **[REF: TEST_RADIX]**: Benchmark più complesso (ispirato alle suite classiche SPLASH) che implementa un algoritmo di Radix Sort multi-thread. A differenza del test sintetico precedente, questo fornisce un traffico di memoria realistico ed eterogeneo, fondamentale per valutare il tasso di successo del *Lazy Metadata Update* e l'efficacia dello *State Bouncing* quando il Tectree è sotto pressione da carichi di elaborazione reali.
